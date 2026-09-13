@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}POS charge{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div>
+        <span class="eyebrow">Point of sale</span>
+        <h1>Create a POS charge</h1>
+        <p>Quote a Lightning invoice in sats; the BIF equivalent is locked in now and credited to your BIF balance the instant it's paid.</p>
+    </div>
+</section>
+
+<div class="form-layout">
+    <div class="card form-card">
+        <div class="form-section-head">
+            <h2>New charge</h2>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-grid">
+                <div class="field">
+                    <label for="amount_sats">Amount (sats)</label>
+                    <input class="text-input" type="number" min="1000" step="1" name="amount_sats" id="amount_sats" required>
+                </div>
+                <div class="field">
+                    <label for="memo">Memo <small>(optional)</small></label>
+                    <input class="text-input" type="text" maxlength="255" name="memo" id="memo" placeholder="e.g. Coffee">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="button" type="submit">Create charge</button>
+            </div>
+        </form>
+
+        {% if recent_charges %}
+        <div class="detail-section">
+            <div class="detail-section-head"><h3>Recent charges</h3></div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Sats</th><th>BIF</th><th>Status</th><th>Date</th></tr></thead>
+                    <tbody>
+                        {% for c in recent_charges %}
+                        <tr>
+                            <td class="text-mono">{{ c.amount_sats }}</td>
+                            <td class="text-mono">{{ c.bif_equivalent }}</td>
+                            <td><span class="status-badge {% if c.status == 'paid' %}status-success{% elif c.status == 'expired' %}status-danger{% else %}status-warning{% endif %}">{{ c.get_status_display }}</span></td>
+                            <td class="muted">{{ c.created_at|date:"M j, H:i" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="side-card card">
+        {% if charge %}
+        <h3>Charge for {{ charge.amount_sats }} sats</h3>
+        <p class="muted">≈ {{ charge.bif_equivalent }} BIF at {{ charge.rate_bif_per_btc }} BIF/BTC</p>
+        {% if qr_code %}
+        <div class="detail-image-frame" style="border-radius: var(--radius-sm); margin: 12px 0;">
+            <img src="{{ qr_code }}" alt="Charge invoice QR code">
+        </div>
+        {% endif %}
+        <span class="detail-label">Payment request</span>
+        <div class="copy-box">{{ charge.payment_request }}</div>
+        <div class="detail-summary-grid" style="margin-top:14px;">
+            <div class="detail-summary-chip">
+                <span class="detail-label">Status</span>
+                <strong id="pos-status"><span class="status-badge status-warning">Pending</span></strong>
+            </div>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h3>No charge yet</h3>
+            <p>Enter an amount to quote a charge and get its invoice QR code.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if charge %}
+<script>
+(function () {
+    var statusEl = document.getElementById("pos-status");
+    if (!statusEl) return;
+    var url = "{% url 'webui:pos_status' charge_id=charge.id %}";
+    var tries = 0;
+    var timer = setInterval(function () {
+        tries += 1;
+        if (tries > 120) { clearInterval(timer); return; }
+        fetch(url).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.status === "paid") {
+                statusEl.innerHTML = '<span class="status-badge status-success">Paid — ' + data.bif_equivalent + ' BIF credited</span>';
+                clearInterval(timer);
+            } else if (data.status === "expired") {
+                statusEl.innerHTML = '<span class="status-badge status-danger">Expired</span>';
+                clearInterval(timer);
+            }
+        }).catch(function () {});
+    }, 3000);
+})();
+</script>
+{% endif %}
+{% endblock %}

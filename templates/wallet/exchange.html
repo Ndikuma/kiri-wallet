@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Exchange{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div>
+        <span class="eyebrow">BIF exchange</span>
+        <h1>Convert sats ↔ BIF</h1>
+        <p>Current rate: <strong>1 BTC = {{ rate.bif_per_btc }} BIF</strong> ({{ rate.source }})</p>
+    </div>
+</section>
+
+<div class="form-layout">
+    <div class="card form-card">
+        <div class="form-section-head">
+            <h2>Convert</h2>
+            <p class="muted">Available: {{ wallet.available_balance }} sats · {{ wallet.bif_balance }} BIF</p>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-grid">
+                <div class="field full-span">
+                    <label>Direction</label>
+                    <div style="display:flex; gap:16px; margin-top:4px;">
+                        <label class="check-inline"><input type="radio" name="direction" value="sats_to_bif" checked> Sats → BIF</label>
+                        <label class="check-inline"><input type="radio" name="direction" value="bif_to_sats"> BIF → Sats</label>
+                    </div>
+                </div>
+                <div class="field full-span">
+                    <label for="amount">Amount</label>
+                    <input class="text-input" type="number" min="1" step="1" name="amount" id="amount" required>
+                    <small>In sats for "Sats → BIF", in BIF for "BIF → Sats".</small>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="button" type="submit">Convert</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="side-card card">
+        <h3>Balances</h3>
+        <div class="detail-meta-list" style="margin-top:12px;">
+            <div class="detail-meta-row">
+                <span class="detail-label">BTC available</span>
+                <span class="detail-value">{{ wallet.available_balance }} sats</span>
+            </div>
+            <div class="detail-meta-row">
+                <span class="detail-label">BIF balance</span>
+                <span class="detail-value">{{ wallet.bif_balance }} BIF</span>
+            </div>
+        </div>
+        <p class="small-note">The rate is fixed by the platform admin and applied at the moment you convert.</p>
+    </div>
+</div>
+{% endblock %}

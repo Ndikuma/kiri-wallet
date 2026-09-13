@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Transactions{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div>
+        <span class="eyebrow">Ledger</span>
+        <h1>Transactions</h1>
+        <p>Every sats and BIF movement on your wallet.</p>
+    </div>
+</section>
+
+<article class="card table-card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Type</th><th>Amount</th><th>Status</th><th>Reference</th><th>Date</th></tr>
+            </thead>
+            <tbody>
+                {% for tx in page %}
+                <tr>
+                    <td>
+                        <div class="record-cell">
+                            <span class="record-title">{{ tx.get_type_display }}</span>
+                            {% if tx.description %}<span class="record-meta">{{ tx.description|truncatechars:60 }}</span>{% endif %}
+                        </div>
+                    </td>
+                    <td class="text-mono">{{ tx.amount }} {{ tx.currency|upper }}</td>
+                    <td><span class="status-badge {% if tx.status == 'confirmed' %}status-success{% elif tx.status == 'pending' %}status-warning{% elif tx.status == 'failed' or tx.status == 'expired' %}status-danger{% else %}status-neutral{% endif %}">{{ tx.get_status_display }}</span></td>
+                    <td class="text-mono muted">{{ tx.onchain_txid|default:tx.lnd_payment_hash|truncatechars:18|default:"—" }}</td>
+                    <td class="muted">{{ tx.created_at|date:"M j, Y H:i" }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5"><div class="empty-state"><h3>No transactions yet</h3></div></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if page.has_other_pages %}
+    <div class="pagination-bar">
+        <span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+        <div class="pagination-actions">
+            {% if page.has_previous %}<a class="button button-light button-small" href="?page={{ page.previous_page_number }}">Previous</a>{% endif %}
+            <span class="pagination-current">{{ page.number }}</span>
+            {% if page.has_next %}<a class="button button-light button-small" href="?page={{ page.next_page_number }}">Next</a>{% endif %}
+        </div>
+    </div>
+    {% endif %}
+</article>
+{% endblock %}

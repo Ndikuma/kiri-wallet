@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<section class="workspace-head">
+    <div>
+        <span class="eyebrow">Wallet overview</span>
+        <h1>Good day, {{ request.user.username }}</h1>
+        <p>Your sats and BIF balances, at a glance.</p>
+    </div>
+    <div class="workspace-head-actions">
+        <a class="button button-light" href="{% url 'webui:withdraw' %}">Withdraw</a>
+        <a class="button" href="{% url 'webui:deposit' %}">Deposit</a>
+    </div>
+</section>
+
+<section class="workspace-kpis">
+    <article class="workspace-kpi">
+        <div class="workspace-kpi-top">
+            <span class="workspace-kpi-icon">₿</span>
+            <span class="workspace-kpi-status">Available</span>
+        </div>
+        <small>Spendable BTC</small>
+        <strong>{{ wallet.available_balance }} sats</strong>
+        <p>Ready to withdraw or exchange.</p>
+    </article>
+    <article class="workspace-kpi tone-warning">
+        <div class="workspace-kpi-top">
+            <span class="workspace-kpi-icon">⏳</span>
+            <span class="workspace-kpi-status">Pending</span>
+        </div>
+        <small>Unconfirmed BTC</small>
+        <strong>{{ wallet.pending_balance }} sats</strong>
+        <p>Awaiting Lightning settlement or confirmations.</p>
+    </article>
+    <article class="workspace-kpi">
+        <div class="workspace-kpi-top">
+            <span class="workspace-kpi-icon">Fr</span>
+            <span class="workspace-kpi-status">Balance</span>
+        </div>
+        <small>BIF balance</small>
+        <strong>{{ wallet.bif_balance }} BIF</strong>
+        <p>From exchange, POS settlements, and top-ups.</p>
+    </article>
+    <article class="workspace-kpi">
+        <div class="workspace-kpi-top">
+            <span class="workspace-kpi-icon">⇄</span>
+            <span class="workspace-kpi-status">Rate</span>
+        </div>
+        <small>1 BTC equals</small>
+        <strong>{{ rate.bif_per_btc }} BIF</strong>
+        <p>Used for exchange and POS quotes.</p>
+    </article>
+</section>
+
+<section class="workspace-grid">
+    <div class="workspace-main">
+        <article class="card table-card">
+            <div class="table-header">
+                <div>
+                    <h3>Recent transactions</h3>
+                    <p>Sats and BIF movements, most recent first.</p>
+                </div>
+                <a class="button button-light button-small" href="{% url 'webui:transactions' %}">View all</a>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr><th>Type</th><th>Amount</th><th>Status</th><th>Date</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for tx in recent_transactions %}
+                        <tr>
+                            <td>
+                                <div class="record-cell">
+                                    <span class="record-title">{{ tx.get_type_display }}</span>
+                                    {% if tx.description %}<span class="record-meta">{{ tx.description|truncatechars:48 }}</span>{% endif %}
+                                </div>
+                            </td>
+                            <td class="text-mono">{{ tx.amount }} {{ tx.currency|upper }}</td>
+                            <td>
+                                <span class="status-badge {% if tx.status == 'confirmed' %}status-success{% elif tx.status == 'pending' %}status-warning{% elif tx.status == 'failed' or tx.status == 'expired' %}status-danger{% else %}status-neutral{% endif %}">{{ tx.get_status_display }}</span>
+                            </td>
+                            <td class="muted">{{ tx.created_at|date:"M j, H:i" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4"><div class="empty-state"><h3>No transactions yet</h3><p>Make your first deposit to get started.</p></div></td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </article>
+    </div>
+
+    <aside class="workspace-side">
+        <article class="card workspace-panel">
+            <div class="workspace-panel-head">
+                <div><span class="eyebrow">Quick actions</span><h2>Move value</h2></div>
+            </div>
+            <div class="workspace-actions">
+                <a href="{% url 'webui:deposit' %}"><span>⚡</span><div><strong>Deposit</strong><small>Lightning invoice</small></div><i>→</i></a>
+                <a href="{% url 'webui:withdraw' %}"><span>↑</span><div><strong>Withdraw</strong><small>Invoice, address, or LNURL</small></div><i>→</i></a>
+                <a href="{% url 'webui:exchange' %}"><span>⇄</span><div><strong>Exchange</strong><small>Sats ↔ BIF</small></div><i>→</i></a>
+                <a href="{% url 'webui:pos' %}"><span>▤</span><div><strong>POS charge</strong><small>Quote in sats, settle in BIF</small></div><i>→</i></a>
+                <a href="{% url 'webui:topup' %}"><span>＋</span><div><strong>Top up BIF</strong><small>Via AmatoPay mobile money</small></div><i>→</i></a>
+            </div>
+        </article>
+
+        <article class="card workspace-panel">
+            <div class="workspace-panel-head">
+                <div><span class="eyebrow">On-chain</span><h2>Bitcoin address</h2></div>
+            </div>
+            <div class="panel-body">
+                {% if wallet.bitcoin_address %}
+                    <span class="detail-label">Your deposit address</span>
+                    <div class="copy-box">{{ wallet.bitcoin_address }}</div>
+                    <a class="small-note" href="{% url 'webui:bitcoin_address' %}">View QR code →</a>
+                {% else %}
+                    <p class="muted">No on-chain address generated yet.</p>
+                    <a class="button button-light button-small" href="{% url 'webui:bitcoin_address' %}" style="margin-top:10px;">Generate address</a>
+                {% endif %}
+            </div>
+        </article>
+    </aside>
+</section>
+{% endblock %}

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Deposit{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div>
+        <span class="eyebrow">Lightning</span>
+        <h1>Deposit sats</h1>
+        <p>Generate a BOLT11 invoice through Blink. Your balance updates the moment it's paid.</p>
+    </div>
+</section>
+
+<div class="form-layout">
+    <div class="card form-card">
+        <div class="form-section-head">
+            <h2>New invoice</h2>
+            <p class="muted">Minimum 1,000 sats.</p>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-grid">
+                <div class="field">
+                    <label for="amount">Amount (sats)</label>
+                    <input class="text-input" type="number" min="1000" step="1" name="amount" id="amount" required>
+                </div>
+                <div class="field">
+                    <label for="memo">Memo <small>(optional)</small></label>
+                    <input class="text-input" type="text" maxlength="120" name="memo" id="memo" placeholder="Wallet deposit">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="button" type="submit">Create invoice</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="side-card card">
+        {% if invoice %}
+        <h3>Pay this invoice</h3>
+        <div class="detail-image-frame" style="border-radius: var(--radius-sm); margin: 12px 0;">
+            <img src="{{ invoice.qrCode }}" alt="Invoice QR code">
+        </div>
+        <span class="detail-label">Payment request</span>
+        <div class="copy-box">{{ invoice.paymentRequest }}</div>
+        <div class="detail-summary-grid" style="margin-top:14px;">
+            <div class="detail-summary-chip">
+                <span class="detail-label">Amount</span>
+                <strong>{{ invoice.satoshis }} sats</strong>
+            </div>
+            <div class="detail-summary-chip">
+                <span class="detail-label">Status</span>
+                <strong id="deposit-status"><span class="status-badge status-warning">Pending</span></strong>
+            </div>
+        </div>
+        <p class="small-note">This page checks for settlement automatically.</p>
+        {% else %}
+        <div class="empty-state">
+            <h3>No invoice yet</h3>
+            <p>Enter an amount to generate a Lightning invoice with its QR code.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if invoice %}
+<script>
+(function () {
+    var statusEl = document.getElementById("deposit-status");
+    var paymentHash = "{{ invoice.paymentHash }}";
+    if (!paymentHash || !statusEl) return;
+    var url = "{% url 'webui:deposit_status' payment_hash='__HASH__' %}".replace("__HASH__", paymentHash);
+    var tries = 0;
+    var timer = setInterval(function () {
+        tries += 1;
+        if (tries > 120) { clearInterval(timer); return; }
+        fetch(url).then(function (r) { return r.json(); }).then(function (data) {
+            if (!data.found) return;
+            if (data.status === "confirmed") {
+                statusEl.innerHTML = '<span class="status-badge status-success">Confirmed</span>';
+                clearInterval(timer);
+            }
+        }).catch(function () {});
+    }, 3000);
+})();
+</script>
+{% endif %}
+{% endblock %}

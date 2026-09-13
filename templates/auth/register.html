@@ -1,0 +1,54 @@
+{% extends "auth/base_auth.html" %}
+
+{% block title %}Create your wallet{% endblock %}
+{% block auth_heading %}Open a wallet in under a minute.{% endblock %}
+{% block auth_copy %}Sats and BIF, one balance. Deposit over Lightning, exchange to BIF, and cash out however you like.{% endblock %}
+
+{% block auth_content %}
+<h1>Create your account</h1>
+<p class="sub">Your wallet is created automatically the first time you sign in.</p>
+
+{% if form.non_field_errors %}
+<div class="auth-note error">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<form method="post" novalidate>
+    {% csrf_token %}
+
+    <div class="auth-field">
+        <label for="{{ form.username.id_for_label }}">Username</label>
+        {{ form.username }}
+        {% for error in form.username.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+    </div>
+
+    <div class="auth-field">
+        <label for="{{ form.email.id_for_label }}">Email</label>
+        {{ form.email }}
+        {% for error in form.email.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+    </div>
+
+    <div class="auth-field">
+        <label for="{{ form.password1.id_for_label }}">Password</label>
+        <div class="auth-pw">
+            {{ form.password1 }}
+            <button type="button" class="auth-pw-toggle" data-pw-toggle="{{ form.password1.id_for_label }}">Show</button>
+        </div>
+        {% for error in form.password1.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+    </div>
+
+    <div class="auth-field">
+        <label for="{{ form.password2.id_for_label }}">Confirm password</label>
+        <div class="auth-pw">
+            {{ form.password2 }}
+            <button type="button" class="auth-pw-toggle" data-pw-toggle="{{ form.password2.id_for_label }}">Show</button>
+        </div>
+        {% for error in form.password2.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+    </div>
+
+    <button class="button" type="submit">Create account</button>
+</form>
+
+<p class="auth-alt">Already have an account? <a href="{% url 'webui:login' %}">Sign in</a></p>
+{% endblock %}

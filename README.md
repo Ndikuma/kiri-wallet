@@ -13,6 +13,7 @@ top-up rail through AmatoPay's merchant checkout API.
   - **BIF exchange**: an admin-configurable BTC↔BIF rate; convert between a user's sats and BIF ledger balances.
   - **POS charges**: quote a Lightning invoice for `amount_sats`, lock in the BIF equivalent at creation time, and credit the merchant's BIF balance (not sats) once it's paid — so the merchant isn't exposed to BTC price moves between charge and settlement.
   - **AmatoPay BIF top-up**: create an AmatoPay hosted-checkout session against a payer's mobile-money alias; poll it and credit `bif_balance` once AmatoPay reports the payment collected.
+- `webui` — a server-rendered dashboard (session-auth, separate from the JWT API): landing page, sign up/sign in, and a page per feature above (deposit, withdraw, exchange, POS, top-up, transactions, on-chain address). Same design system (`static/css/app.css`, light/dark) as this team's other retail project, retinted to Bitcoin orange.
 
 ## Setup
 
@@ -27,6 +28,8 @@ python manage.py seed_exchange_rate 150000000.00   # 1 BTC = 150,000,000 BIF, ad
 python manage.py createsuperuser
 python manage.py runserver
 ```
+
+Visit `http://localhost:8000/` for the dashboard (sign up, then use the sidebar), or call `/api/...` directly — they share the same wallet, just different auth (session cookie vs. JWT).
 
 Run the Lightning payment monitor (a separate long-lived process, e.g. a systemd unit or a second container) alongside the API:
 

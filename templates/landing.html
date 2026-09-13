@@ -1,0 +1,94 @@
+{% extends "public_base.html" %}
+
+{% block title %}BTC Wallet — Bitcoin, Lightning &amp; BIF{% endblock %}
+
+{% block content %}
+<section class="hero-band">
+    <div class="hero-inner">
+        <span class="hero-eyebrow">Bitcoin · Lightning · BIF</span>
+        <h1>One wallet for sats and Burundian Francs.</h1>
+        <p>Deposit and withdraw Bitcoin over Lightning or on-chain, exchange straight to BIF at a live rate, accept point-of-sale charges settled in BIF, and top up via AmatoPay mobile money.</p>
+        <div class="hero-actions">
+            <a class="button btn-lg" href="{% url 'webui:register' %}">Create your wallet</a>
+            <a class="button button-light btn-lg" href="{% url 'webui:login' %}">Sign in</a>
+        </div>
+        <div class="hero-stats">
+            <div><b>⚡</b><span>Lightning via Blink</span></div>
+            <div><b>₿</b><span>On-chain, one HD wallet</span></div>
+            <div><b>Fr</b><span>BIF exchange &amp; POS</span></div>
+        </div>
+    </div>
+</section>
+
+<section class="section" id="features">
+    <div class="section-head">
+        <span class="eyebrow">What it does</span>
+        <h2>Everything a custodial BTC/BIF wallet needs</h2>
+        <p>Built on a real Lightning integration and a real on-chain wallet — not a placeholder.</p>
+    </div>
+    <div class="feature-grid">
+        <div class="feature-card">
+            <div class="fc-icon">⚡</div>
+            <h3>Lightning deposits &amp; withdrawals</h3>
+            <p>Generate a BOLT11 invoice, get credited the moment it settles, and pay out to any invoice, Lightning address, or LNURL.</p>
+        </div>
+        <div class="feature-card">
+            <div class="fc-icon">₿</div>
+            <h3>On-chain Bitcoin</h3>
+            <p>One BIP32 HD wallet derives every deposit address. Withdrawals are signed and locally re-verified before they're ever broadcast.</p>
+        </div>
+        <div class="feature-card">
+            <div class="fc-icon">Fr</div>
+            <h3>BIF exchange</h3>
+            <p>Convert between your sats and BIF balance at an admin-configured rate — quote first, convert when you're ready.</p>
+        </div>
+        <div class="feature-card">
+            <div class="fc-icon">▤</div>
+            <h3>POS charges</h3>
+            <p>Quote a charge in sats, lock in the BIF equivalent, and get paid in BIF the instant the Lightning invoice is settled.</p>
+        </div>
+        <div class="feature-card">
+            <div class="fc-icon">＋</div>
+            <h3>AmatoPay top-up</h3>
+            <p>Top up your BIF balance directly from mobile money through AmatoPay's hosted checkout.</p>
+        </div>
+        <div class="feature-card">
+            <div class="fc-icon">≣</div>
+            <h3>One transaction ledger</h3>
+            <p>Every sats and BIF movement — deposits, withdrawals, exchanges, POS settlements, top-ups — in a single history.</p>
+        </div>
+    </div>
+</section>
+
+<section class="section" id="how">
+    <div class="section-head">
+        <span class="eyebrow">How it works</span>
+        <h2>From sign-up to settlement</h2>
+    </div>
+    <div class="step-grid">
+        <div class="step-card">
+            <b>1</b>
+            <h3>Create your wallet</h3>
+            <p>Sign up and a sats + BIF wallet is created for you automatically.</p>
+        </div>
+        <div class="step-card">
+            <b>2</b>
+            <h3>Fund it</h3>
+            <p>Deposit over Lightning, on-chain, or top up BIF directly via AmatoPay mobile money.</p>
+        </div>
+        <div class="step-card">
+            <b>3</b>
+            <h3>Move value</h3>
+            <p>Withdraw, exchange to BIF, or charge a customer at the point of sale.</p>
+        </div>
+    </div>
+</section>
+
+<section class="cta-band">
+    <div>
+        <h2>Ready to open a wallet?</h2>
+        <p>It takes a minute, and your first Lightning invoice can be ready right after.</p>
+    </div>
+    <a class="button" href="{% url 'webui:register' %}">Create your wallet</a>
+</section>
+{% endblock %}

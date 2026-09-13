@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Bitcoin address{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div>
+        <span class="eyebrow">On-chain</span>
+        <h1>Your Bitcoin address</h1>
+        <p>One address, derived from the platform's single BIP32 HD wallet. Deposits are credited after 4 confirmations.</p>
+    </div>
+</section>
+
+<div class="card" style="max-width:480px;">
+    {% if wallet.bitcoin_address %}
+        {% if qr_code %}
+        <div class="detail-image-frame" style="border-radius: var(--radius-sm); margin-bottom: 14px;">
+            <img src="{{ qr_code }}" alt="Bitcoin address QR code">
+        </div>
+        {% endif %}
+        <span class="detail-label">Address</span>
+        <div class="copy-box">{{ wallet.bitcoin_address }}</div>
+        <p class="small-note">Send only Bitcoin, on the network this wallet is configured for (see BITCOIN_NETWORK), to this address.</p>
+    {% else %}
+        <div class="empty-state">
+            <h3>No address yet</h3>
+            <p>Generate a dedicated on-chain deposit address.</p>
+        </div>
+        <form method="post" style="text-align:center;">
+            {% csrf_token %}
+            <button class="button" type="submit">Generate address</button>
+        </form>
+    {% endif %}
+</div>
+{% endblock %}

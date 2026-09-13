@@ -1,0 +1,63 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f7931a">
+    <title>{% block title %}BTC Wallet{% endblock %} · BTC Wallet</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/app.css' %}">
+    {% block head %}{% endblock %}
+</head>
+<body class="public">
+    <div class="auth-shell">
+        <div class="auth-form-col">
+            <div class="auth-card">
+                <a href="{% url 'webui:landing' %}" class="brand-mark" aria-label="BTC Wallet">₿</a>
+
+                {% if messages %}
+                    {% for message in messages %}
+                    <div class="auth-note {{ message.tags }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+
+                {% block auth_content %}{% endblock %}
+            </div>
+        </div>
+
+        <aside class="auth-aside">
+            <div class="brand-mark" aria-hidden="true">₿</div>
+            <div>
+                <h2>{% block auth_heading %}A custodial Bitcoin &amp; Lightning wallet, with BIF built in.{% endblock %}</h2>
+                <p>{% block auth_copy %}Deposit and withdraw over Lightning or on-chain, exchange sats for Burundian Francs, and accept point-of-sale charges settled straight to BIF.{% endblock %}</p>
+                <ul class="auth-points">
+                    <li><span class="tick">✓</span> Lightning deposits &amp; withdrawals via Blink</li>
+                    <li><span class="tick">✓</span> On-chain BTC, one HD wallet, verified before broadcast</li>
+                    <li><span class="tick">✓</span> BIF exchange, POS charges, and AmatoPay top-ups</li>
+                </ul>
+            </div>
+            <div class="foot">© {% now "Y" %} BTC Wallet</div>
+        </aside>
+    </div>
+
+    <script src="{% static 'js/app.js' %}" defer></script>
+    <script>
+      (function () {
+        document.querySelectorAll("[data-pw-toggle]").forEach(function (btn) {
+          var input = document.getElementById(btn.getAttribute("data-pw-toggle"));
+          if (!input) return;
+          btn.addEventListener("click", function () {
+            var show = input.type === "password";
+            input.type = show ? "text" : "password";
+            btn.textContent = show ? "Hide" : "Show";
+            input.focus();
+          });
+        });
+      })();
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

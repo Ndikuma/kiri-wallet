@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Withdraw{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div>
+        <span class="eyebrow">Send</span>
+        <h1>Withdraw sats</h1>
+        <p>Pay a Lightning invoice, Lightning address, LNURL, or a Bitcoin address.</p>
+    </div>
+</section>
+
+<div class="form-layout">
+    <div class="card form-card">
+        <div class="form-section-head">
+            <h2>Available: {{ wallet.available_balance }} sats</h2>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-grid">
+                <div class="field full-span">
+                    <label for="target">Destination</label>
+                    <input class="text-input" type="text" name="target" id="target" placeholder="Lightning invoice, address, LNURL, or bc1..." required>
+                    <small>Amount is optional for a Lightning invoice that already specifies one.</small>
+                </div>
+                <div class="field">
+                    <label for="amount">Amount (sats)</label>
+                    <input class="text-input" type="number" min="1000" step="1" name="amount" id="amount">
+                </div>
+                <div class="field">
+                    <label for="memo">Memo <small>(optional)</small></label>
+                    <input class="text-input" type="text" maxlength="120" name="memo" id="memo">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="button" type="submit">Send</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="side-card card">
+        {% if result %}
+        <h3>Withdrawal submitted</h3>
+        <div class="detail-summary-grid" style="margin-top:12px;">
+            <div class="detail-summary-chip">
+                <span class="detail-label">Amount</span>
+                <strong>{{ result.tx.amount }} sats</strong>
+            </div>
+            <div class="detail-summary-chip">
+                <span class="detail-label">Status</span>
+                <strong><span class="status-badge status-success">{{ result.tx.get_status_display }}</span></strong>
+            </div>
+        </div>
+        {% if result.tx.onchain_txid %}
+        <span class="mini-label">Transaction ID</span>
+        <div class="copy-box">{{ result.tx.onchain_txid }}</div>
+        {% endif %}
+        {% else %}
+        <div class="empty-state">
+            <h3>No withdrawal yet</h3>
+            <p>Fees are quoted automatically from the active withdrawal fee policy for the destination type.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

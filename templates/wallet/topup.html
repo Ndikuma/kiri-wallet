@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Top up BIF{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div>
+        <span class="eyebrow">AmatoPay</span>
+        <h1>Top up your BIF balance</h1>
+        <p>Pay from your mobile money alias through AmatoPay's hosted checkout; your BIF balance is credited once it's collected.</p>
+    </div>
+</section>
+
+<div class="form-layout">
+    <div class="card form-card">
+        <div class="form-section-head">
+            <h2>New top-up</h2>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-grid">
+                <div class="field">
+                    <label for="amount_bif">Amount (BIF)</label>
+                    <input class="text-input" type="number" min="1" step="1" name="amount_bif" id="amount_bif" required>
+                </div>
+                <div class="field">
+                    <label for="payer_alias">Payer mobile alias</label>
+                    <input class="text-input" type="text" name="payer_alias" id="payer_alias" placeholder="+25779000000" required>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="button" type="submit">Start top-up</button>
+            </div>
+        </form>
+
+        {% if recent_sessions %}
+        <div class="detail-section">
+            <div class="detail-section-head"><h3>Recent top-ups</h3></div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>BIF</th><th>Alias</th><th>Status</th><th>Date</th></tr></thead>
+                    <tbody>
+                        {% for s in recent_sessions %}
+                        <tr>
+                            <td class="text-mono">{{ s.amount_bif }}</td>
+                            <td>{{ s.payer_alias }}</td>
+                            <td><span class="status-badge {% if s.status == 'confirmed' %}status-success{% elif s.status == 'failed' or s.status == 'expired' %}status-danger{% else %}status-warning{% endif %}">{{ s.get_status_display }}</span></td>
+                            <td class="muted">{{ s.created_at|date:"M j, H:i" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="side-card card">
+        {% if session %}
+        <h3>Top-up for {{ session.amount_bif }} BIF</h3>
+        <p class="muted">Payer: {{ session.payer_alias }}</p>
+        {% if session.checkout_url %}
+        <a class="button" style="width:100%; justify-content:center; margin-top:12px;" href="{{ session.checkout_url }}" target="_blank" rel="noopener">Open checkout</a>
+        {% endif %}
+        <div class="detail-summary-grid" style="margin-top:14px;">
+            <div class="detail-summary-chip">
+                <span class="detail-label">Status</span>
+                <strong id="topup-status"><span class="status-badge status-warning">Pending</span></strong>
+            </div>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h3>No top-up yet</h3>
+            <p>Start one to get a checkout link for the payer's mobile money app.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if session %}
+<script>
+(function () {
+    var statusEl = document.getElementById("topup-status");
+    if (!statusEl) return;
+    var url = "{% url 'webui:topup_status' session_id=session.session_id %}";
+    var tries = 0;
+    var timer = setInterval(function () {
+        tries += 1;
+        if (tries > 120) { clearInterval(timer); return; }
+        fetch(url).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.status === "confirmed") {
+                statusEl.innerHTML = '<span class="status-badge status-success">Confirmed</span>';
+                clearInterval(timer);
+            } else if (data.status === "failed" || data.status === "expired") {
+                statusEl.innerHTML = '<span class="status-badge status-danger">' + data.status + '</span>';
+                clearInterval(timer);
+            }
+        }).catch(function () {});
+    }, 4000);
+})();
+</script>
+{% endif %}
+{% endblock %}
