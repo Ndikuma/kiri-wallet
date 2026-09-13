@@ -200,17 +200,11 @@ def exchange_view(request):
     rate = ExchangeRate.current()
 
     if request.method == "POST":
-        direction = request.POST.get("direction")
         amount_raw = request.POST.get("amount", "").strip()
         amount = int(amount_raw) if amount_raw.isdigit() else 0
 
         try:
-            if direction == "sats_to_bif":
-                result = bif.convert_sats_to_bif(wallet, amount)
-            elif direction == "bif_to_sats":
-                result = bif.convert_bif_to_sats(wallet, amount)
-            else:
-                raise ValueError("Choose a direction.")
+            result = bif.convert_sats_to_bif(wallet, amount)
         except ValueError as exc:
             messages.error(request, str(exc))
         else:

@@ -10,7 +10,7 @@ top-up rail through AmatoPay's merchant checkout API.
 - `wallet` — everything else, under `/api/wallet/`:
   - **Lightning wallet** (real implementation, via [Blink](https://blink.sv)'s custodial API): deposit invoices, withdrawals to a Lightning invoice/address/LNURL, real-time settlement over a WebSocket subscriber, admin-configurable withdrawal fees.
   - **On-chain Bitcoin** (real implementation, via [btclib](https://github.com/btclib-org/btclib) + blockstream.info/mempool.space): one BIP32 HD wallet for the whole platform, per-user deposit addresses, deposit scanning, and on-chain withdrawal (build → sign → locally re-verify → broadcast a real P2PKH transaction). See the security note below before pointing this at mainnet.
-  - **BIF exchange**: an admin-configurable BTC↔BIF rate; convert between a user's sats and BIF ledger balances.
+  - **BIF exchange**: an admin-configurable BTC→BIF rate; exchange a user's sats for BIF (one-directional — BIF is not sold back for sats).
   - **POS charges**: quote a Lightning invoice for `amount_sats`, lock in the BIF equivalent at creation time, and credit the merchant's BIF balance (not sats) once it's paid — so the merchant isn't exposed to BTC price moves between charge and settlement.
   - **AmatoPay BIF top-up**: create an AmatoPay hosted-checkout session against a payer's mobile-money alias; poll it and credit `bif_balance` once AmatoPay reports the payment collected.
 - `webui` — a server-rendered dashboard (session-auth, separate from the JWT API): landing page, sign up/sign in, and a page per feature above (deposit, withdraw, exchange, POS, top-up, transactions, on-chain address). Same design system (`static/css/app.css`, light/dark) as this team's other retail project, retinted to Bitcoin orange.
@@ -71,8 +71,8 @@ Wallet (`/api/wallet/`), all requiring `Authorization: Bearer <access_token>`:
 - `GET|POST /bitcoin/` — fetch/generate the user's on-chain deposit address
 - `GET  /blink/`, `/onchain/`, `/amatopay/` — provider connectivity status
 - `GET  /exchange/rate/` — current BTC→BIF rate
-- `POST /exchange/quote/` `{amount_sats | amount_bif}` — convert, without moving any balance
-- `POST /exchange/convert/` `{direction, amount}` — actually move sats↔BIF between the wallet's own balances (`direction` is `sats_to_bif` or `bif_to_sats`)
+- `POST /exchange/quote/` `{amount_sats}` — quote the BIF equivalent, without moving any balance
+- `POST /exchange/convert/` `{amount_sats}` — actually exchange sats for BIF (debits `available_balance`, credits `bif_balance`); one-directional, BIF is never converted back to sats
 - `POST /pos/charge/` `{amount_sats, memo}` — create a POS charge (Lightning invoice + locked-in BIF quote)
 - `GET  /pos/charge/<id>/` — poll a POS charge's status
 - `POST /bif/topup/` `{amount_bif, payer_alias}` — start an AmatoPay checkout session

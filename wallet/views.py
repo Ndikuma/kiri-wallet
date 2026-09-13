@@ -236,15 +236,10 @@ class WalletViewSet(viewsets.GenericViewSet):
         wallet = self._wallet()
         serializer = ExchangeConvertSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        direction = serializer.validated_data["direction"]
-        amount = serializer.validated_data["amount"]
         try:
-            if direction == "sats_to_bif":
-                result = bif.convert_sats_to_bif(wallet, amount)
-            else:
-                result = bif.convert_bif_to_sats(wallet, amount)
+            result = bif.convert_sats_to_bif(wallet, serializer.validated_data["amount_sats"])
         except ValueError as exc:
-            return Response({"success": False, "errors": [{"field": "amount", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+            return Response({"success": False, "errors": [{"field": "amount_sats", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
         return Response({"success": True, "message": "Converted.", "data": result})
 
     # ── POS: quote a charge in sats, settle as BIF ─────────

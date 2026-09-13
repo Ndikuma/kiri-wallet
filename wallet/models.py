@@ -12,8 +12,7 @@ class TransactionType(models.TextChoices):
     DEPOSIT = "deposit", "Deposit"
     WITHDRAWAL = "withdrawal", "Withdrawal"
     FEE = "fee", "Platform Fee"
-    EXCHANGE_SATS_TO_BIF = "exchange_sats_to_bif", "Exchange: SATS → BIF"
-    EXCHANGE_BIF_TO_SATS = "exchange_bif_to_sats", "Exchange: BIF → SATS"
+    EXCHANGE_SATS_TO_BIF = "exchange_sats_to_bif", "Exchange: SATS to BIF"
     BIF_TOPUP = "bif_topup", "BIF Top-up (AmatoPay)"
     POS_SETTLEMENT = "pos_settlement", "POS Settlement (BIF)"
 

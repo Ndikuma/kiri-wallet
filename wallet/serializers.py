@@ -85,18 +85,11 @@ class ExchangeRateSerializer(serializers.ModelSerializer):
 
 
 class ExchangeQuoteSerializer(serializers.Serializer):
-    amount_sats = serializers.IntegerField(required=False, min_value=1)
-    amount_bif = serializers.IntegerField(required=False, min_value=1)
-
-    def validate(self, attrs):
-        if not attrs.get("amount_sats") and not attrs.get("amount_bif"):
-            raise serializers.ValidationError("Provide amount_sats or amount_bif.")
-        return attrs
+    amount_sats = serializers.IntegerField(min_value=1, help_text="Satoshis to quote a BIF equivalent for.")
 
 
 class ExchangeConvertSerializer(serializers.Serializer):
-    direction = serializers.ChoiceField(choices=["sats_to_bif", "bif_to_sats"])
-    amount = serializers.IntegerField(min_value=1, help_text="In sats for sats_to_bif, in BIF for bif_to_sats.")
+    amount_sats = serializers.IntegerField(min_value=1, help_text="Sats to exchange for BIF.")
 
 
 class POSChargeSerializer(serializers.ModelSerializer):

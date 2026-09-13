@@ -2,9 +2,9 @@
 BIF (Burundian Franc) exchange + point-of-sale logic.
 
 Two related but distinct features:
-  - Exchange: convert between the user's own BTC (sats) and BIF ledger
-    balances, at the current admin-configured ExchangeRate. Pure internal
-    bookkeeping, no external calls.
+  - Exchange: convert the user's own sats to BIF (one direction only — this
+    wallet does not sell sats back for BIF) at the current admin-configured
+    ExchangeRate. Pure internal bookkeeping, no external calls.
   - POS charge: a merchant quotes a Lightning invoice for `amount_sats`,
     locking in the BIF equivalent at creation time. When the Blink invoice
     is paid, `wallet/invoice_updater.py` credits `bif_balance` (not
@@ -30,20 +30,14 @@ from wallet.models import (
 from wallet.options import SETTINGS
 
 
-def get_quote(*, amount_sats: int | None = None, amount_bif: int | None = None) -> dict[str, Any]:
-    if not amount_sats and not amount_bif:
-        raise ValueError("Provide amount_sats or amount_bif.")
+def get_quote(*, amount_sats: int) -> dict[str, Any]:
+    if not amount_sats or amount_sats <= 0:
+        raise ValueError("Provide a positive amount_sats.")
     rate = ExchangeRate.current()
-    if amount_sats:
-        bif = rate.sats_to_bif(amount_sats)
-        return {
-            "rate_id": str(rate.pk), "bif_per_btc": str(rate.bif_per_btc),
-            "amount_sats": int(amount_sats), "amount_bif": bif,
-        }
-    sats = rate.bif_to_sats(amount_bif)
+    bif = rate.sats_to_bif(amount_sats)
     return {
         "rate_id": str(rate.pk), "bif_per_btc": str(rate.bif_per_btc),
-        "amount_sats": sats, "amount_bif": int(amount_bif),
+        "amount_sats": int(amount_sats), "amount_bif": bif,
     }
 
 
@@ -75,38 +69,6 @@ def convert_sats_to_bif(wallet: Wallet, amount_sats: int) -> dict[str, Any]:
 
     return {
         "amount_sats": amount_sats, "amount_bif": bif_amount, "rate_bif_per_btc": str(rate.bif_per_btc),
-        "available_balance": locked.available_balance, "bif_balance": locked.bif_balance,
-    }
-
-
-def convert_bif_to_sats(wallet: Wallet, amount_bif: int) -> dict[str, Any]:
-    if amount_bif <= 0:
-        raise ValueError("amount_bif must be positive.")
-    rate = ExchangeRate.current()
-    sats_amount = rate.bif_to_sats(amount_bif)
-
-    with db_transaction.atomic():
-        locked = Wallet.objects.select_for_update().get(pk=wallet.pk)
-        if locked.bif_balance < amount_bif:
-            raise ValueError(f"Insufficient BIF balance. Available: {locked.bif_balance} BIF.")
-
-        locked.bif_balance -= amount_bif
-        locked.available_balance += sats_amount
-        locked.save(update_fields=["available_balance", "bif_balance", "updated_at"])
-
-        WalletTransaction.objects.create(
-            user=locked.user, wallet=locked, type=TransactionType.EXCHANGE_BIF_TO_SATS,
-            currency=TransactionCurrency.BIF, amount=amount_bif, balance_after=locked.bif_balance,
-            status=TransactionStatus.CONFIRMED, description=f"Exchanged for {sats_amount} sats @ {rate.bif_per_btc} BIF/BTC",
-        )
-        WalletTransaction.objects.create(
-            user=locked.user, wallet=locked, type=TransactionType.EXCHANGE_BIF_TO_SATS,
-            currency=TransactionCurrency.SATS, amount=sats_amount, balance_after=locked.available_balance,
-            status=TransactionStatus.CONFIRMED, description=f"Exchanged from {amount_bif} BIF @ {rate.bif_per_btc} BIF/BTC",
-        )
-
-    return {
-        "amount_sats": sats_amount, "amount_bif": amount_bif, "rate_bif_per_btc": str(rate.bif_per_btc),
         "available_balance": locked.available_balance, "bif_balance": locked.bif_balance,
     }
 

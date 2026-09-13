@@ -6,8 +6,8 @@
 <section class="page-head">
     <div>
         <span class="eyebrow">BIF exchange</span>
-        <h1>Convert sats and BIF</h1>
-        <p>Current rate: <strong>1 BTC = {{ rate.bif_per_btc }} BIF</strong> ({{ rate.source }})</p>
+        <h1>Exchange sats for BIF</h1>
+        <p>Current rate: <strong>1 BTC = {{ rate.bif_per_btc }} BIF</strong> ({{ rate.source }}). Sats convert to BIF only — BIF cannot be converted back to sats.</p>
     </div>
 </section>
 
@@ -21,20 +21,13 @@
             {% csrf_token %}
             <div class="form-grid">
                 <div class="field full-span">
-                    <label>Direction</label>
-                    <div style="display:flex; gap:16px; margin-top:4px;">
-                        <label class="check-inline"><input type="radio" name="direction" value="sats_to_bif" checked> Sats to BIF</label>
-                        <label class="check-inline"><input type="radio" name="direction" value="bif_to_sats"> BIF to Sats</label>
-                    </div>
-                </div>
-                <div class="field full-span">
-                    <label for="amount">Amount</label>
+                    <label for="amount">Amount (sats)</label>
                     <input class="text-input" type="number" min="1" step="1" name="amount" id="amount" required>
-                    <small>In sats for "Sats to BIF", in BIF for "BIF to Sats".</small>
+                    <small>Converted to BIF at the current rate and credited to your BIF balance.</small>
                 </div>
             </div>
             <div class="form-actions">
-                <button class="button" type="submit">Convert</button>
+                <button class="button" type="submit">Exchange for BIF</button>
             </div>
         </form>
     </div>
