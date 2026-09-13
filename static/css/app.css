@@ -132,6 +132,14 @@ img { max-width: 100%; }
   stroke: currentColor; fill: none;
   stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round;
 }
+/* Same stroked-icon rule, sized per container it's dropped into */
+.brand-mark svg, .site-brand-mark svg { width: 18px; height: 18px; }
+.fc-icon svg { width: 20px; height: 20px; }
+.workspace-kpi-icon svg { width: 17px; height: 17px; }
+.workspace-actions a > span svg, .step-card b svg { width: 15px; height: 15px; }
+.tick svg { width: 12px; height: 12px; }
+.arrow-icon { display: inline-flex; vertical-align: -3px; }
+.arrow-icon svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ==========================================================================
    App shell
@@ -1084,22 +1092,40 @@ body.public { background: var(--bg); }
   font-size: 12px; color: var(--text-faint); border-top: 1px solid var(--border);
 }
 
-/* ---- Auth screens ---------------------------------------------------- */
+/* ---- Auth screens: centered card on a glow field --------------------- */
 
-.auth-shell { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 460px) 1fr; }
-.auth-form-col { display: flex; align-items: center; justify-content: center; padding: 44px 30px; }
-.auth-card { width: 100%; max-width: 400px; }
-.auth-card .brand-mark {
-  width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
-  font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 18px;
+.auth-page {
+  min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 26px; padding: 48px 20px;
+  background:
+    radial-gradient(760px 420px at 18% -10%, var(--brand-soft), transparent),
+    radial-gradient(620px 360px at 88% 110%, color-mix(in srgb, var(--accent) 20%, transparent), transparent);
+}
+.auth-center-brand {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-weight: 800; font-size: 15.5px; color: var(--text); letter-spacing: -.01em;
+}
+.auth-center-brand:hover { text-decoration: none; }
+.auth-center-mark {
+  width: 36px; height: 36px; border-radius: 11px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; color: #fff;
   background: linear-gradient(140deg, var(--brand), var(--accent));
 }
-.auth-card h1 { font-size: 22px; letter-spacing: -.01em; }
-.auth-card .sub { color: var(--text-soft); font-size: 13px; margin: 6px 0 22px; }
+.auth-center-mark svg { width: 18px; height: 18px; }
+
+.auth-center-card {
+  width: 100%; max-width: 404px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  padding: 30px 28px;
+}
+.auth-center-card h1 { font-size: 21px; letter-spacing: -.01em; }
+.auth-center-card .sub { color: var(--text-soft); font-size: 13px; margin: 6px 0 22px; }
+
 .auth-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .auth-field label { font-size: 12.5px; font-weight: 600; color: var(--text); }
 .auth-field .help-text { font-size: 11.5px; color: var(--text-faint); line-height: 1.5; }
-.auth-card .button { width: 100%; justify-content: center; margin-top: 6px; padding: 11px 16px; }
+.auth-center-card .button { width: 100%; justify-content: center; margin-top: 6px; padding: 11px 16px; }
 .auth-note {
   padding: 10px 12px; border-radius: 8px; font-size: 12.5px; margin-bottom: 14px;
   background: var(--danger-soft); color: var(--danger);
@@ -1107,7 +1133,6 @@ body.public { background: var(--bg); }
 .auth-note.success { background: var(--ok-soft); color: var(--ok); }
 .field-error { color: var(--danger); font-size: 11.5px; font-weight: 550; }
 .auth-alt { text-align: center; font-size: 12.5px; color: var(--text-soft); margin-top: 16px; }
-.auth-foot-note { font-size: 12px; color: var(--text-faint); margin-top: 16px; line-height: 1.55; }
 .auth-pw { position: relative; display: flex; }
 .auth-pw input { padding-right: 58px; }
 .auth-pw-toggle {
@@ -1117,22 +1142,18 @@ body.public { background: var(--bg); }
 }
 .auth-pw-toggle:hover { color: var(--brand); }
 
-.auth-aside {
-  position: relative; overflow: hidden; color: #fff;
-  padding: 56px 52px; display: flex; flex-direction: column; justify-content: space-between;
-  background: linear-gradient(150deg, var(--brand-strong), var(--brand) 55%, var(--accent));
+.icon-chip-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.icon-chip-row.centered { justify-content: center; max-width: 460px; }
+.icon-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 13px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+  font-size: 12px; font-weight: 600; color: var(--text-soft);
 }
-.auth-aside .brand-mark { background: rgba(255,255,255,.16); color: #fff; width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font-weight: 800; }
-.auth-aside h2 { font-size: 26px; font-weight: 700; line-height: 1.25; max-width: 16ch; }
-.auth-aside p { font-size: 13.5px; color: rgba(255,255,255,.85); margin-top: 12px; line-height: 1.65; max-width: 38ch; }
-.auth-points { list-style: none; margin: 26px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
-.auth-points li { display: flex; gap: 11px; align-items: center; font-size: 13px; color: rgba(255,255,255,.92); }
-.auth-points .tick { width: 22px; height: 22px; flex: none; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center; font-size: 12px; }
-.auth-aside .foot { font-size: 12px; color: rgba(255,255,255,.7); }
+.icon-chip svg { width: 14px; height: 14px; color: var(--brand); }
+.auth-center-foot { font-size: 12px; color: var(--text-faint); }
 
 @media (max-width: 900px) {
-  .auth-shell { grid-template-columns: 1fr; }
-  .auth-aside { display: none; }
   .site-nav a:not(.button) { display: none; }
 }
 

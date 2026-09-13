@@ -12,36 +12,29 @@
     <link rel="stylesheet" href="{% static 'css/app.css' %}">
     {% block head %}{% endblock %}
 </head>
-<body class="public">
-    <div class="auth-shell">
-        <div class="auth-form-col">
-            <div class="auth-card">
-                <a href="{% url 'webui:landing' %}" class="brand-mark" aria-label="BTC Wallet">₿</a>
+<body class="public auth-page">
+    <a href="{% url 'webui:landing' %}" class="auth-center-brand">
+        <span class="auth-center-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span>
+        BTC Wallet
+    </a>
 
-                {% if messages %}
-                    {% for message in messages %}
-                    <div class="auth-note {{ message.tags }}">{{ message }}</div>
-                    {% endfor %}
-                {% endif %}
+    <div class="auth-center-card">
+        {% if messages %}
+            {% for message in messages %}
+            <div class="auth-note {{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
 
-                {% block auth_content %}{% endblock %}
-            </div>
-        </div>
-
-        <aside class="auth-aside">
-            <div class="brand-mark" aria-hidden="true">₿</div>
-            <div>
-                <h2>{% block auth_heading %}A custodial Bitcoin &amp; Lightning wallet, with BIF built in.{% endblock %}</h2>
-                <p>{% block auth_copy %}Deposit and withdraw over Lightning or on-chain, exchange sats for Burundian Francs, and accept point-of-sale charges settled straight to BIF.{% endblock %}</p>
-                <ul class="auth-points">
-                    <li><span class="tick">✓</span> Lightning deposits &amp; withdrawals via Blink</li>
-                    <li><span class="tick">✓</span> On-chain BTC, one HD wallet, verified before broadcast</li>
-                    <li><span class="tick">✓</span> BIF exchange, POS charges, and AmatoPay top-ups</li>
-                </ul>
-            </div>
-            <div class="foot">© {% now "Y" %} BTC Wallet</div>
-        </aside>
+        {% block auth_content %}{% endblock %}
     </div>
+
+    <div class="icon-chip-row centered">
+        <span class="icon-chip">{% include "partials/sidebar_icon.html" with icon_name="lightning" %} Lightning deposits</span>
+        <span class="icon-chip">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %} On-chain BTC</span>
+        <span class="icon-chip">{% include "partials/sidebar_icon.html" with icon_name="swap" %} BIF exchange</span>
+    </div>
+
+    <p class="auth-center-foot">© {% now "Y" %} BTC Wallet</p>
 
     <script src="{% static 'js/app.js' %}" defer></script>
     <script>

@@ -19,7 +19,7 @@
   <header class="site-header">
     <div class="site-header-inner">
       <a class="site-brand" href="{% url 'webui:landing' %}">
-        <span class="site-brand-mark">₿</span> BTC Wallet
+        <span class="site-brand-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span> BTC Wallet
       </a>
       <nav class="site-nav">
         <a href="#features">Features</a>
@@ -48,7 +48,7 @@
   <footer class="site-footer">
     <div class="site-footer-inner">
       <div>
-        <strong><span class="site-brand-mark">₿</span> BTC Wallet</strong>
+        <strong><span class="site-brand-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span> BTC Wallet</strong>
         <p>Bitcoin, Lightning, and BIF in one custodial wallet.</p>
       </div>
       <nav>

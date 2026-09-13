@@ -12,10 +12,10 @@
             <a class="button btn-lg" href="{% url 'webui:register' %}">Create your wallet</a>
             <a class="button button-light btn-lg" href="{% url 'webui:login' %}">Sign in</a>
         </div>
-        <div class="hero-stats">
-            <div><b>⚡</b><span>Lightning via Blink</span></div>
-            <div><b>₿</b><span>On-chain, one HD wallet</span></div>
-            <div><b>Fr</b><span>BIF exchange &amp; POS</span></div>
+        <div class="icon-chip-row" style="margin-top:28px;">
+            <span class="icon-chip">{% include "partials/sidebar_icon.html" with icon_name="lightning" %} Lightning via Blink</span>
+            <span class="icon-chip">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %} On-chain, one HD wallet</span>
+            <span class="icon-chip">{% include "partials/sidebar_icon.html" with icon_name="swap" %} BIF exchange &amp; POS</span>
         </div>
     </div>
 </section>
@@ -28,32 +28,32 @@
     </div>
     <div class="feature-grid">
         <div class="feature-card">
-            <div class="fc-icon">⚡</div>
+            <div class="fc-icon">{% include "partials/sidebar_icon.html" with icon_name="lightning" %}</div>
             <h3>Lightning deposits &amp; withdrawals</h3>
             <p>Generate a BOLT11 invoice, get credited the moment it settles, and pay out to any invoice, Lightning address, or LNURL.</p>
         </div>
         <div class="feature-card">
-            <div class="fc-icon">₿</div>
+            <div class="fc-icon">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</div>
             <h3>On-chain Bitcoin</h3>
             <p>One BIP32 HD wallet derives every deposit address. Withdrawals are signed and locally re-verified before they're ever broadcast.</p>
         </div>
         <div class="feature-card">
-            <div class="fc-icon">Fr</div>
+            <div class="fc-icon">{% include "partials/sidebar_icon.html" with icon_name="swap" %}</div>
             <h3>BIF exchange</h3>
             <p>Convert between your sats and BIF balance at an admin-configured rate — quote first, convert when you're ready.</p>
         </div>
         <div class="feature-card">
-            <div class="fc-icon">▤</div>
+            <div class="fc-icon">{% include "partials/sidebar_icon.html" with icon_name="pos" %}</div>
             <h3>POS charges</h3>
             <p>Quote a charge in sats, lock in the BIF equivalent, and get paid in BIF the instant the Lightning invoice is settled.</p>
         </div>
         <div class="feature-card">
-            <div class="fc-icon">＋</div>
+            <div class="fc-icon">{% include "partials/sidebar_icon.html" with icon_name="topup" %}</div>
             <h3>AmatoPay top-up</h3>
             <p>Top up your BIF balance directly from mobile money through AmatoPay's hosted checkout.</p>
         </div>
         <div class="feature-card">
-            <div class="fc-icon">≣</div>
+            <div class="fc-icon">{% include "partials/sidebar_icon.html" with icon_name="transactions" %}</div>
             <h3>One transaction ledger</h3>
             <p>Every sats and BIF movement — deposits, withdrawals, exchanges, POS settlements, top-ups — in a single history.</p>
         </div>

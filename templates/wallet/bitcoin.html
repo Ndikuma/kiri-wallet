@@ -11,25 +11,73 @@
     </div>
 </section>
 
-<div class="card" style="max-width:480px;">
+<div class="detail-hero">
     {% if wallet.bitcoin_address %}
-        {% if qr_code %}
-        <div class="detail-image-frame" style="border-radius: var(--radius-sm); margin-bottom: 14px;">
-            <img src="{{ qr_code }}" alt="Bitcoin address QR code">
+    <article class="card detail-image-card">
+        <div class="detail-image-frame">
+            {% if qr_code %}<img src="{{ qr_code }}" alt="Bitcoin address QR code">{% endif %}
         </div>
-        {% endif %}
-        <span class="detail-label">Address</span>
-        <div class="copy-box">{{ wallet.bitcoin_address }}</div>
-        <p class="small-note">Send only Bitcoin, on the network this wallet is configured for (see BITCOIN_NETWORK), to this address.</p>
+        <div class="detail-image-meta">
+            <span class="detail-label">Address</span>
+            <div class="copy-box">{{ wallet.bitcoin_address }}</div>
+        </div>
+    </article>
+
+    <aside class="detail-side-stack">
+        <article class="card">
+            <span class="detail-label">Network</span>
+            <span class="detail-value">As configured by BITCOIN_NETWORK on this deployment.</span>
+            <div class="detail-meta-list" style="margin-top:14px;">
+                <div class="detail-meta-row">
+                    <span class="detail-label">Confirmations needed</span>
+                    <span class="detail-value">4</span>
+                </div>
+                <div class="detail-meta-row">
+                    <span class="detail-label">Derivation</span>
+                    <span class="detail-value text-mono">m/44'/…/0'/0/n</span>
+                </div>
+            </div>
+            <p class="small-note">Send only Bitcoin to this address, on the network this wallet is configured for.</p>
+        </article>
+    </aside>
     {% else %}
+    <article class="card" style="grid-column: 1 / -1;">
         <div class="empty-state">
             <h3>No address yet</h3>
             <p>Generate a dedicated on-chain deposit address.</p>
+            <form method="post" style="margin-top:14px;">
+                {% csrf_token %}
+                <button class="button" type="submit">Generate address</button>
+            </form>
         </div>
-        <form method="post" style="text-align:center;">
-            {% csrf_token %}
-            <button class="button" type="submit">Generate address</button>
-        </form>
+    </article>
     {% endif %}
 </div>
+
+{% if onchain_transactions %}
+<article class="card table-card">
+    <div class="table-header">
+        <div>
+            <h3>Recent on-chain activity</h3>
+            <p>Deposits and withdrawals settled on-chain.</p>
+        </div>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Type</th><th>Amount</th><th>Confirmations</th><th>Status</th><th>Date</th></tr></thead>
+            <tbody>
+                {% for tx in onchain_transactions %}
+                <tr>
+                    <td>{{ tx.get_type_display }}</td>
+                    <td class="text-mono">{{ tx.amount }} sats</td>
+                    <td>{{ tx.confirmations }}</td>
+                    <td><span class="status-badge {% if tx.status == 'confirmed' %}status-success{% elif tx.status == 'pending' %}status-warning{% else %}status-neutral{% endif %}">{{ tx.get_status_display }}</span></td>
+                    <td class="muted">{{ tx.created_at|date:"M j, H:i" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</article>
+{% endif %}
 {% endblock %}

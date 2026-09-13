@@ -6,7 +6,7 @@
 <section class="page-head">
     <div>
         <span class="eyebrow">BIF exchange</span>
-        <h1>Convert sats ↔ BIF</h1>
+        <h1>Convert sats and BIF</h1>
         <p>Current rate: <strong>1 BTC = {{ rate.bif_per_btc }} BIF</strong> ({{ rate.source }})</p>
     </div>
 </section>
@@ -23,14 +23,14 @@
                 <div class="field full-span">
                     <label>Direction</label>
                     <div style="display:flex; gap:16px; margin-top:4px;">
-                        <label class="check-inline"><input type="radio" name="direction" value="sats_to_bif" checked> Sats → BIF</label>
-                        <label class="check-inline"><input type="radio" name="direction" value="bif_to_sats"> BIF → Sats</label>
+                        <label class="check-inline"><input type="radio" name="direction" value="sats_to_bif" checked> Sats to BIF</label>
+                        <label class="check-inline"><input type="radio" name="direction" value="bif_to_sats"> BIF to Sats</label>
                     </div>
                 </div>
                 <div class="field full-span">
                     <label for="amount">Amount</label>
                     <input class="text-input" type="number" min="1" step="1" name="amount" id="amount" required>
-                    <small>In sats for "Sats → BIF", in BIF for "BIF → Sats".</small>
+                    <small>In sats for "Sats to BIF", in BIF for "BIF to Sats".</small>
                 </div>
             </div>
             <div class="form-actions">

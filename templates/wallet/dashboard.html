@@ -18,7 +18,7 @@
 <section class="workspace-kpis">
     <article class="workspace-kpi">
         <div class="workspace-kpi-top">
-            <span class="workspace-kpi-icon">₿</span>
+            <span class="workspace-kpi-icon">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span>
             <span class="workspace-kpi-status">Available</span>
         </div>
         <small>Spendable BTC</small>
@@ -27,7 +27,7 @@
     </article>
     <article class="workspace-kpi tone-warning">
         <div class="workspace-kpi-top">
-            <span class="workspace-kpi-icon">⏳</span>
+            <span class="workspace-kpi-icon">{% include "partials/sidebar_icon.html" with icon_name="clock" %}</span>
             <span class="workspace-kpi-status">Pending</span>
         </div>
         <small>Unconfirmed BTC</small>
@@ -36,7 +36,7 @@
     </article>
     <article class="workspace-kpi">
         <div class="workspace-kpi-top">
-            <span class="workspace-kpi-icon">Fr</span>
+            <span class="workspace-kpi-icon">{% include "partials/sidebar_icon.html" with icon_name="topup" %}</span>
             <span class="workspace-kpi-status">Balance</span>
         </div>
         <small>BIF balance</small>
@@ -45,7 +45,7 @@
     </article>
     <article class="workspace-kpi">
         <div class="workspace-kpi-top">
-            <span class="workspace-kpi-icon">⇄</span>
+            <span class="workspace-kpi-icon">{% include "partials/sidebar_icon.html" with icon_name="swap" %}</span>
             <span class="workspace-kpi-status">Rate</span>
         </div>
         <small>1 BTC equals</small>
@@ -99,11 +99,11 @@
                 <div><span class="eyebrow">Quick actions</span><h2>Move value</h2></div>
             </div>
             <div class="workspace-actions">
-                <a href="{% url 'webui:deposit' %}"><span>⚡</span><div><strong>Deposit</strong><small>Lightning invoice</small></div><i>→</i></a>
-                <a href="{% url 'webui:withdraw' %}"><span>↑</span><div><strong>Withdraw</strong><small>Invoice, address, or LNURL</small></div><i>→</i></a>
-                <a href="{% url 'webui:exchange' %}"><span>⇄</span><div><strong>Exchange</strong><small>Sats ↔ BIF</small></div><i>→</i></a>
-                <a href="{% url 'webui:pos' %}"><span>▤</span><div><strong>POS charge</strong><small>Quote in sats, settle in BIF</small></div><i>→</i></a>
-                <a href="{% url 'webui:topup' %}"><span>＋</span><div><strong>Top up BIF</strong><small>Via AmatoPay mobile money</small></div><i>→</i></a>
+                <a href="{% url 'webui:deposit' %}"><span>{% include "partials/sidebar_icon.html" with icon_name="lightning" %}</span><div><strong>Deposit</strong><small>Lightning invoice</small></div><span class="arrow-icon">{% include "partials/sidebar_icon.html" with icon_name="arrow-right" %}</span></a>
+                <a href="{% url 'webui:withdraw' %}"><span>{% include "partials/sidebar_icon.html" with icon_name="withdraw" %}</span><div><strong>Withdraw</strong><small>Invoice, address, or LNURL</small></div><span class="arrow-icon">{% include "partials/sidebar_icon.html" with icon_name="arrow-right" %}</span></a>
+                <a href="{% url 'webui:exchange' %}"><span>{% include "partials/sidebar_icon.html" with icon_name="swap" %}</span><div><strong>Exchange</strong><small>Sats to BIF and back</small></div><span class="arrow-icon">{% include "partials/sidebar_icon.html" with icon_name="arrow-right" %}</span></a>
+                <a href="{% url 'webui:pos' %}"><span>{% include "partials/sidebar_icon.html" with icon_name="pos" %}</span><div><strong>POS charge</strong><small>Quote in sats, settle in BIF</small></div><span class="arrow-icon">{% include "partials/sidebar_icon.html" with icon_name="arrow-right" %}</span></a>
+                <a href="{% url 'webui:topup' %}"><span>{% include "partials/sidebar_icon.html" with icon_name="topup" %}</span><div><strong>Top up BIF</strong><small>Via AmatoPay mobile money</small></div><span class="arrow-icon">{% include "partials/sidebar_icon.html" with icon_name="arrow-right" %}</span></a>
             </div>
         </article>
 
@@ -115,7 +115,7 @@
                 {% if wallet.bitcoin_address %}
                     <span class="detail-label">Your deposit address</span>
                     <div class="copy-box">{{ wallet.bitcoin_address }}</div>
-                    <a class="small-note" href="{% url 'webui:bitcoin_address' %}">View QR code →</a>
+                    <a class="small-note" href="{% url 'webui:bitcoin_address' %}">View QR code <span class="arrow-icon">{% include "partials/sidebar_icon.html" with icon_name="arrow-right" %}</span></a>
                 {% else %}
                     <p class="muted">No on-chain address generated yet.</p>
                     <a class="button button-light button-small" href="{% url 'webui:bitcoin_address' %}" style="margin-top:10px;">Generate address</a>

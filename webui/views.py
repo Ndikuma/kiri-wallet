@@ -175,7 +175,10 @@ def bitcoin_address_view(request):
         except Exception:
             qr_code = ""
 
-    return render(request, "wallet/bitcoin.html", {"wallet": wallet, "qr_code": qr_code})
+    onchain_transactions = wallet.transactions.exclude(onchain_address="").order_by("-created_at")[:10]
+    return render(request, "wallet/bitcoin.html", {
+        "wallet": wallet, "qr_code": qr_code, "onchain_transactions": onchain_transactions,
+    })
 
 
 # ── Transactions ─────────────────────────────────────────────
@@ -213,7 +216,7 @@ def exchange_view(request):
         else:
             messages.success(
                 request,
-                f"Converted {result['amount_sats']} sats ↔ {result['amount_bif']} BIF at "
+                f"Converted {result['amount_sats']} sats and {result['amount_bif']} BIF at "
                 f"{result['rate_bif_per_btc']} BIF/BTC.",
             )
             wallet.refresh_from_db()
