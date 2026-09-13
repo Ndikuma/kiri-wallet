@@ -2,7 +2,9 @@ from django.contrib import admin
 
 from .models import (
     AmatoPayCheckoutSession,
+    BitcoinHDWallet,
     ExchangeRate,
+    PlatformBitcoinAddress,
     POSCharge,
     Wallet,
     WalletTransaction,
@@ -48,3 +50,28 @@ class AmatoPayCheckoutSessionAdmin(admin.ModelAdmin):
     list_display = ["session_id", "wallet", "payer_alias", "amount_bif", "status", "created_at"]
     list_filter = ["status"]
     search_fields = ["session_id", "payer_alias", "wallet__user__username"]
+
+
+@admin.register(BitcoinHDWallet)
+class BitcoinHDWalletAdmin(admin.ModelAdmin):
+    """Never exposes the encrypted root key; created/rotated only via wallet/onchain_keys.py."""
+
+    list_display = ["network", "next_index", "created_at"]
+    readonly_fields = ["id", "network", "next_index", "created_at"]
+    fields = readonly_fields
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(PlatformBitcoinAddress)
+class PlatformBitcoinAddressAdmin(admin.ModelAdmin):
+    list_display = ["address", "derivation_index", "label", "created_at"]
+    search_fields = ["address", "label"]
+    readonly_fields = ["id", "address", "derivation_index", "label", "created_at"]
+
+    def has_add_permission(self, request):
+        return False

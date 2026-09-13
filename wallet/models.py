@@ -375,3 +375,41 @@ class POSCharge(models.Model):
 
     def __str__(self):
         return f"POS charge {self.amount_sats} sats → {self.bif_equivalent} BIF [{self.status}]"
+
+
+class BitcoinHDWallet(models.Model):
+    """
+    Singleton: the platform's one BIP32 root extended private key, encrypted
+    at rest (Fernet, `WALLET_ENCRYPTION_KEY`). Every on-chain address the
+    platform hands out is a deterministic child of this one root key
+    (m/44'/coin_type'/0'/0/<next_index>) — decrypted in-process only to
+    derive a specific child key when signing a withdrawal.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    encrypted_root_xprv = models.TextField(help_text="Fernet-encrypted BIP32 root xprv.")
+    network = models.CharField(max_length=20, help_text="btclib network name this root key was created for.")
+    next_index = models.PositiveIntegerField(default=0, help_text="Next unused BIP44 address_index to derive.")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Bitcoin HD wallet (singleton)"
+
+    def __str__(self):
+        return f"BitcoinHDWallet({self.network}, next_index={self.next_index})"
+
+
+class PlatformBitcoinAddress(models.Model):
+    """One address derived from `BitcoinHDWallet`, for a user deposit or internal change."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    address = models.CharField(max_length=120, unique=True, db_index=True)
+    derivation_index = models.PositiveIntegerField(unique=True)
+    label = models.CharField(max_length=100, blank=True, default="", help_text="e.g. user-<wallet_id> or change.")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["derivation_index"]
+
+    def __str__(self):
+        return f"{self.address} (#{self.derivation_index}, {self.label or 'unlabeled'})"

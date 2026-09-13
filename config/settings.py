@@ -127,6 +127,14 @@ LND_CERT_PATH = os.getenv("LND_CERT_PATH", str(BASE_DIR / "tls.cert"))
 AMATOPAY_API_KEY = os.getenv("AMATOPAY_API_KEY", "")
 AMATOPAY_BASE_URL = os.getenv("AMATOPAY_BASE_URL", "http://localhost:8000")
 
+# On-chain Bitcoin (btclib). Defaults to testnet on purpose, so
+# switching to real funds ("mainnet") is a deliberate .env change, not an
+# accident. WALLET_ENCRYPTION_KEY encrypts custodied private keys at rest
+# (wallet/onchain_keys.py) — generate one with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+BITCOIN_NETWORK = os.getenv("BITCOIN_NETWORK", "testnet")
+WALLET_ENCRYPTION_KEY = os.getenv("WALLET_ENCRYPTION_KEY", "")
+
 
 # ── Celery (Blink invoice-poll fallback task) ───────────────
 
