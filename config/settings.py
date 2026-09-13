@@ -33,6 +33,8 @@ INSTALLED_APPS = [
 
     "rest_framework",
     "rest_framework_simplejwt",
+    "django_celery_beat",
+    "django_celery_results",
 
     "accounts",
     "wallet",
@@ -107,3 +109,37 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
 }
+
+
+# ── Lightning (Blink) / on-chain LND / AmatoPay ─────────────
+# Read via python-decouple in wallet/options.py too; also exposed on
+# `settings` directly because wallet/lnd_service.py reads it that way.
+
+BLINK_API_KEY = os.getenv("BLINK_API_KEY", "")
+BLINK_API_URL = os.getenv("BLINK_API_URL", "https://api.blink.sv/graphql")
+BLINK_WS_URL = os.getenv("BLINK_WS_URL", "wss://ws.blink.sv/graphql")
+BLINK_WS_USER_AGENT = os.getenv("BLINK_WS_USER_AGENT", "BtcWalletBlinkWS/1.0")
+
+LND_REST_URL = os.getenv("LND_REST_URL", "")
+LND_MACAROON = os.getenv("LND_MACAROON", "")
+LND_CERT_PATH = os.getenv("LND_CERT_PATH", str(BASE_DIR / "tls.cert"))
+
+AMATOPAY_API_KEY = os.getenv("AMATOPAY_API_KEY", "")
+AMATOPAY_BASE_URL = os.getenv("AMATOPAY_BASE_URL", "http://localhost:8000")
+
+
+# ── Celery (Blink invoice-poll fallback task) ───────────────
+
+CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = "django-db"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_IMPORTS = ("wallet.celery_tasks",)
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_RESULT_EXTENDED = True
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TIMEZONE = "UTC"
+CELERY_ENABLE_UTC = True
+CELERY_TASK_DEFAULT_QUEUE = "btc_wallet"
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"

@@ -1,96 +1,301 @@
-import uuid
-
-from django.db import transaction
-from rest_framework import generics, status
+from rest_framework import status as http_status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
-from .models import Transaction, TransactionStatus, TransactionType, Wallet
-from .serializers import (
-    CreateDepositSerializer,
-    CreateWithdrawalSerializer,
-    TransactionSerializer,
-    WalletSerializer,
+from wallet import bif
+from wallet.amatopay_client import AmatoPayError
+from wallet.amatopay_topup import check_topup_session, create_topup_session
+from wallet.bitcoin import CustodialBitcoinService
+from wallet.blink_wallet import BlinkWallet, BlinkWalletError
+from wallet.models import (
+    AmatoPayCheckoutSession,
+    ExchangeRate,
+    POSCharge,
+    TransactionStatus,
+    TransactionType,
+    Wallet,
+    WalletTransaction,
 )
+from wallet.options import SETTINGS
+from wallet.provider_status import get_amatopay_status, get_blink_status, get_onchain_status
+from wallet.serializers import (
+    AmatoPayTopupCreateSerializer,
+    AmatoPayTopupSessionSerializer,
+    DepositRequestSerializer,
+    ExchangeConvertSerializer,
+    ExchangeQuoteSerializer,
+    ExchangeRateSerializer,
+    POSChargeCreateSerializer,
+    POSChargeSerializer,
+    WalletSerializer,
+    WalletTransactionSerializer,
+    WithdrawalDecodeSerializer,
+    WithdrawalFeeEstimateSerializer,
+    WithdrawalRequestSerializer,
+)
+from wallet.withdrawal import decode_withdrawal_target, estimate_withdrawal_fees, process_withdrawal
 
 
-def get_or_create_wallet(user):
-    wallet, _ = Wallet.objects.get_or_create(user=user)
-    return wallet
+class WalletViewSet(viewsets.GenericViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = WalletSerializer
 
+    def _wallet(self) -> Wallet:
+        return Wallet.objects.get_or_create(user=self.request.user)[0]
 
-class WalletDetailView(APIView):
-    def get(self, request):
-        wallet = get_or_create_wallet(request.user)
-        return Response(WalletSerializer(wallet).data)
+    # ── core wallet ─────────────────────────────────────────
 
+    @action(detail=False, methods=["GET"])
+    def me(self, request):
+        return Response({"success": True, "data": WalletSerializer(self._wallet()).data})
 
-class TransactionListView(generics.ListAPIView):
-    serializer_class = TransactionSerializer
+    @action(detail=False, methods=["GET"])
+    def transactions(self, request):
+        wallet = self._wallet()
+        qs = wallet.transactions.all().order_by("-created_at")
+        return Response({"success": True, "data": WalletTransactionSerializer(qs, many=True).data})
 
-    def get_queryset(self):
-        wallet = get_or_create_wallet(self.request.user)
-        return wallet.transactions.all()
+    # ── Lightning deposit / withdrawal (Blink) ─────────────
 
-
-class CreateDepositView(APIView):
-    """Create a pending deposit request.
-
-    NOTE: this only records the intent. Wiring this to a real Lightning
-    node / on-chain address generator (LND, Blink, etc.) is a follow-up step.
-    """
-
-    def post(self, request):
-        serializer = CreateDepositSerializer(data=request.data)
+    @action(detail=False, methods=["POST"])
+    def deposit(self, request):
+        wallet = self._wallet()
+        serializer = DepositRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        amount = serializer.validated_data["amount"]
 
-        wallet = get_or_create_wallet(request.user)
-        txn = Transaction.objects.create(
-            id=uuid.uuid4(),
-            wallet=wallet,
-            type=TransactionType.DEPOSIT,
-            status=TransactionStatus.PENDING,
-            amount_sats=data["amount_sats"],
-            memo=data.get("memo", ""),
+        try:
+            blink = BlinkWallet()
+            invoice = blink.create_ln_invoice(amount, memo=serializer.validated_data.get("memo", ""))
+        except BlinkWalletError as exc:
+            return Response({"success": False, "errors": [{"field": "amount", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"success": False, "errors": [{"field": "amount", "message": f"Blink API error: {exc}"}]}, status=http_status.HTTP_502_BAD_GATEWAY)
+
+        wallet.add_pending_balance(amount)
+        tx = wallet.settle(
+            amount, TransactionType.DEPOSIT,
+            lnd_invoice=invoice.get("paymentRequest", ""), lnd_payment_hash=invoice.get("paymentHash", ""),
+            status=TransactionStatus.PENDING, description=serializer.validated_data.get("memo", ""),
+            balance_after=wallet.available_balance,
         )
-        return Response(TransactionSerializer(txn).data, status=status.HTTP_201_CREATED)
+        return Response({
+            "success": True,
+            "message": "Invoice generated successfully.",
+            "data": {
+                "transaction_id": str(tx.id),
+                "payment_request": invoice.get("paymentRequest", ""),
+                "payment_hash": invoice.get("paymentHash", ""),
+                "amount_sats": amount,
+                "expires_at": invoice.get("expiresAt"),
+                "qr_code": invoice.get("qrCode", ""),
+                "pending_balance": wallet.pending_balance,
+                "available_balance": wallet.available_balance,
+            },
+        })
 
+    @action(detail=False, methods=["GET"])
+    def deposit_status(self, request):
+        payment_hash = request.query_params.get("payment_hash", "")
+        if not payment_hash:
+            return Response({"success": False, "message": "payment_hash query param is required."}, status=http_status.HTTP_400_BAD_REQUEST)
 
-class CreateWithdrawalView(APIView):
-    """Create a pending withdrawal request and lock the funds from the available balance.
-
-    NOTE: actually paying out over Lightning/on-chain is a follow-up step;
-    this view only reserves the balance and records the request.
-    """
-
-    def post(self, request):
-        serializer = CreateWithdrawalSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-        amount = data["amount_sats"]
-
-        get_or_create_wallet(request.user)
-        with transaction.atomic():
-            wallet = Wallet.objects.select_for_update().get(user=request.user)
-            if wallet.available_balance < amount:
-                return Response(
-                    {"detail": "Insufficient balance."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            wallet.available_balance -= amount
-            wallet.save(update_fields=["available_balance", "updated_at"])
-
-            txn = Transaction.objects.create(
-                id=uuid.uuid4(),
-                wallet=wallet,
-                type=TransactionType.WITHDRAWAL,
-                status=TransactionStatus.PENDING,
-                amount_sats=amount,
-                balance_after=wallet.available_balance,
-                lightning_invoice=data.get("lightning_invoice", ""),
-                onchain_address=data.get("onchain_address", ""),
+        try:
+            tx = WalletTransaction.objects.select_related("wallet", "user").get(
+                lnd_payment_hash=payment_hash, type=TransactionType.DEPOSIT, user=request.user,
             )
+        except WalletTransaction.DoesNotExist:
+            return Response({"success": False, "message": "Deposit transaction not found."}, status=http_status.HTTP_404_NOT_FOUND)
 
-        return Response(TransactionSerializer(txn).data, status=status.HTTP_201_CREATED)
+        blink_info = {}
+        if SETTINGS.has_blink:
+            try:
+                blink_info = BlinkWallet().get_ln_invoice_status(payment_hash=payment_hash)
+            except BlinkWalletError:
+                pass
+
+        return Response({
+            "success": True,
+            "data": {
+                "transaction_id": str(tx.id), "payment_hash": tx.lnd_payment_hash, "payment_request": tx.lnd_invoice,
+                "amount_sats": tx.amount, "blink_status": blink_info.get("status", tx.status), "status": tx.status,
+                "balance_after": tx.balance_after, "pending_balance": tx.wallet.pending_balance,
+                "available_balance": tx.wallet.available_balance, "created_at": tx.created_at, "settled_at": tx.settled_at,
+            },
+        })
+
+    @action(detail=False, methods=["POST"])
+    def decode_withdrawal(self, request):
+        serializer = WithdrawalDecodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            decoded = decode_withdrawal_target(serializer.validated_data["target"])
+        except Exception as exc:
+            return Response({"success": False, "errors": [{"field": "target", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "data": decoded.as_dict()})
+
+    @action(detail=False, methods=["POST"])
+    def withdrawal_fees(self, request):
+        wallet = self._wallet()
+        serializer = WithdrawalFeeEstimateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            estimate = estimate_withdrawal_fees(wallet=wallet, destination=serializer.validated_data["target"], amount_sats=serializer.validated_data.get("amount"))
+        except Exception as exc:
+            return Response({"success": False, "errors": [{"field": "target", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "data": estimate})
+
+    @action(detail=False, methods=["POST"])
+    def withdraw(self, request):
+        wallet = self._wallet()
+        serializer = WithdrawalRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            tx, provider_result = process_withdrawal(
+                wallet=wallet, destination=serializer.validated_data["target"],
+                amount_sats=serializer.validated_data.get("amount"), memo=serializer.validated_data.get("memo", ""),
+            )
+        except ValueError as exc:
+            return Response({"success": False, "errors": [{"field": "withdrawal", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"success": False, "errors": [{"field": "provider", "message": str(exc)}]}, status=http_status.HTTP_502_BAD_GATEWAY)
+        return Response({
+            "success": True, "message": "Withdrawal submitted.",
+            "data": {
+                "txn_id": str(tx.id), "amount_sats": tx.amount, "status": tx.status,
+                "balance_after": tx.balance_after, "available_balance": wallet.available_balance,
+                "withdrawal": provider_result,
+            },
+        })
+
+    # ── on-chain Bitcoin (optional; requires bitcoinlib) ────
+
+    @action(detail=False, methods=["GET"])
+    def my_bitcoin_address(self, request):
+        wallet = self._wallet()
+        if not wallet.bitcoin_address:
+            return Response({"success": False, "message": "No deposit address generated yet. Call generate_deposit_address first."}, status=http_status.HTTP_404_NOT_FOUND)
+        try:
+            service = CustodialBitcoinService()
+            qr = service.generate_qr(wallet.bitcoin_address)
+        except Exception as exc:
+            return Response({"success": False, "errors": [{"field": "address", "message": str(exc)}]}, status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"success": True, "data": {"bitcoin_address": wallet.bitcoin_address, "qr_code": qr}})
+
+    @action(detail=False, methods=["POST"])
+    def generate_deposit_address(self, request):
+        wallet = self._wallet()
+        try:
+            service = CustodialBitcoinService()
+            result = service.get_or_create_user_address(wallet)
+        except Exception as exc:
+            return Response({"success": False, "errors": [{"field": "address", "message": str(exc)}]}, status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"success": True, "data": result, "message": "Deposit address generated."})
+
+    # ── provider status ─────────────────────────────────────
+
+    @action(detail=False, methods=["GET"])
+    def blink_status(self, request):
+        status = get_blink_status()
+        if not status["success"]:
+            code = http_status.HTTP_503_SERVICE_UNAVAILABLE if not status["configured"] else http_status.HTTP_502_BAD_GATEWAY
+            return Response({"success": False, "errors": [{"field": "blink", "message": status["message"]}], "data": status}, status=code)
+        return Response({"success": True, "data": status})
+
+    @action(detail=False, methods=["GET"])
+    def onchain_status(self, request):
+        status = get_onchain_status()
+        code = http_status.HTTP_200_OK if status["success"] else http_status.HTTP_502_BAD_GATEWAY
+        return Response({"success": status["success"], "data": status}, status=code)
+
+    @action(detail=False, methods=["GET"])
+    def amatopay_status(self, request):
+        status = get_amatopay_status()
+        code = http_status.HTTP_200_OK if status["success"] else http_status.HTTP_503_SERVICE_UNAVAILABLE
+        return Response({"success": status["success"], "data": status}, status=code)
+
+    # ── BIF exchange (internal ledger, sats <-> BIF) ───────
+
+    @action(detail=False, methods=["GET"], url_path="exchange/rate")
+    def exchange_rate(self, request):
+        return Response({"success": True, "data": ExchangeRateSerializer(ExchangeRate.current()).data})
+
+    @action(detail=False, methods=["POST"], url_path="exchange/quote")
+    def exchange_quote(self, request):
+        serializer = ExchangeQuoteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            quote = bif.get_quote(**serializer.validated_data)
+        except ValueError as exc:
+            return Response({"success": False, "errors": [{"field": "amount", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "data": quote})
+
+    @action(detail=False, methods=["POST"], url_path="exchange/convert")
+    def exchange_convert(self, request):
+        wallet = self._wallet()
+        serializer = ExchangeConvertSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        direction = serializer.validated_data["direction"]
+        amount = serializer.validated_data["amount"]
+        try:
+            if direction == "sats_to_bif":
+                result = bif.convert_sats_to_bif(wallet, amount)
+            else:
+                result = bif.convert_bif_to_sats(wallet, amount)
+        except ValueError as exc:
+            return Response({"success": False, "errors": [{"field": "amount", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "message": "Converted.", "data": result})
+
+    # ── POS: quote a charge in sats, settle as BIF ─────────
+
+    @action(detail=False, methods=["POST"], url_path="pos/charge")
+    def pos_charge(self, request):
+        wallet = self._wallet()
+        serializer = POSChargeCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            pos_charge, invoice = bif.create_pos_charge(wallet, **serializer.validated_data)
+        except BlinkWalletError as exc:
+            return Response({"success": False, "errors": [{"field": "amount_sats", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        except ValueError as exc:
+            return Response({"success": False, "errors": [{"field": "amount_sats", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        data = POSChargeSerializer(pos_charge).data
+        data["qr_code"] = invoice.get("qrCode", "")
+        return Response({"success": True, "message": "POS charge created.", "data": data}, status=http_status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["GET"], url_path=r"pos/charge/(?P<pos_charge_id>[^/.]+)")
+    def pos_charge_status(self, request, pos_charge_id=None):
+        try:
+            pos_charge = POSCharge.objects.get(pk=pos_charge_id, wallet=self._wallet())
+        except POSCharge.DoesNotExist:
+            return Response({"success": False, "message": "POS charge not found."}, status=http_status.HTTP_404_NOT_FOUND)
+        return Response({"success": True, "data": POSChargeSerializer(pos_charge).data})
+
+    # ── AmatoPay BIF top-up (mobile-money collection) ──────
+
+    @action(detail=False, methods=["POST"], url_path="bif/topup")
+    def bif_topup(self, request):
+        wallet = self._wallet()
+        serializer = AmatoPayTopupCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            session = create_topup_session(wallet, **serializer.validated_data)
+        except AmatoPayError as exc:
+            return Response({"success": False, "errors": [{"field": "amatopay", "message": str(exc)}]}, status=http_status.HTTP_502_BAD_GATEWAY)
+        except ValueError as exc:
+            return Response({"success": False, "errors": [{"field": "amount_bif", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "message": "Top-up session created.", "data": AmatoPayTopupSessionSerializer(session).data}, status=http_status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["GET"], url_path=r"bif/topup/(?P<session_id>[^/.]+)")
+    def bif_topup_status(self, request, session_id=None):
+        wallet = self._wallet()
+        try:
+            session = AmatoPayCheckoutSession.objects.get(session_id=session_id, wallet=wallet)
+        except AmatoPayCheckoutSession.DoesNotExist:
+            return Response({"success": False, "message": "Top-up session not found."}, status=http_status.HTTP_404_NOT_FOUND)
+        try:
+            session = check_topup_session(session)
+        except AmatoPayError as exc:
+            return Response({"success": False, "errors": [{"field": "amatopay", "message": str(exc)}]}, status=http_status.HTTP_502_BAD_GATEWAY)
+        return Response({"success": True, "data": AmatoPayTopupSessionSerializer(session).data})
