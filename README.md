@@ -35,13 +35,29 @@ python manage.py runserver
 
 Visit `http://localhost:8000/` for the dashboard (sign up, then use the sidebar), or call `/api/...` directly — they share the same wallet, just different auth (session cookie vs. JWT).
 
-Run the Lightning payment monitor (a separate long-lived process, e.g. a systemd unit or a second container) alongside the API:
+Run the monitor (a separate long-lived process, e.g. a systemd unit or a second container) alongside the API — this is what actually notices an incoming payment and credits the wallet (or settles a POS charge as BIF) in real time:
 
 ```bash
-python manage.py blink_ws --backfill
+python manage.py worker --backfill
 ```
 
-This is what actually notices an incoming Lightning payment and credits the wallet (or settles a POS charge as BIF) in real time. A Celery task (`wallet.celery_tasks.poll_blink_invoice_update`) exists as a polling fallback if you'd rather run that on a schedule via `django-celery-beat` instead of (or in addition to) the WebSocket subscriber:
+`worker` runs both monitors together in one process: the Blink WebSocket subscriber (Lightning, push/real-time) and a periodic on-chain scan (Bitcoin, poll — there's no push mechanism for on-chain deposits). Each side degrades on its own if unconfigured (no `BLINK_API_KEY` just logs a warning and skips Lightning) rather than taking the other down. Useful flags:
+
+```bash
+python manage.py worker --onchain-interval 30      # scan on-chain every 30s (default 60)
+python manage.py worker --skip-onchain             # Lightning only — same as `blink_ws`
+python manage.py worker --skip-lightning           # on-chain only — same as `scan_bitcoin --watch`
+```
+
+The two monitors are also available standalone, for running them in separate processes/containers instead:
+
+```bash
+python manage.py blink_ws --backfill               # Lightning WebSocket subscriber only
+python manage.py scan_bitcoin --watch --interval 60   # on-chain scanner only, looping
+python manage.py scan_bitcoin                         # on-chain scanner, single pass (e.g. from cron)
+```
+
+A Celery task (`wallet.celery_tasks.poll_blink_invoice_update`) exists as a polling fallback for Lightning if you'd rather run that on a schedule via `django-celery-beat` instead of (or in addition to) the WebSocket subscriber:
 
 ```bash
 celery -A config worker -l info
@@ -58,6 +74,7 @@ celery -A config beat -l info    # if scheduling poll_blink_invoice_update perio
 | `BITCOIN_NETWORK` | `testnet` (default) or `mainnet` — which chain the platform's HD wallet and every derived address belong to. |
 | `WALLET_ENCRYPTION_KEY` | Fernet key encrypting the platform's BIP32 root xprv at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Back this up along with the database** — losing it loses every on-chain address's funds. |
 | `REDIS_URL` | Celery broker, only needed if you run the polling fallback task. |
+| `LOG_LEVEL` | Console log level (default `INFO`) — without a `LOGGING` config, Python drops `.info()`/`.debug()` calls entirely, so this is what makes `worker`/`blink_ws`/`scan_bitcoin` actually visible. |
 
 ## API
 

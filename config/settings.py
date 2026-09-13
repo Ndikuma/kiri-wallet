@@ -104,6 +104,24 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Without this, logger.info()/.debug() calls throughout the codebase (wallet's
+# monitoring commands especially — worker, blink_ws, scan_bitcoin — are entirely
+# silent: Python's logging falls back to a "last resort" handler that only
+# prints WARNING and above. LOG_LEVEL lets a deployment quiet this down (e.g.
+# WARNING) without editing code.
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "console": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s", "datefmt": "%Y-%m-%d %H:%M:%S"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "console"},
+    },
+    "root": {"handlers": ["console"], "level": LOG_LEVEL},
+}
+
 LOGIN_URL = "webui:login"
 LOGIN_REDIRECT_URL = "webui:dashboard"
 LOGOUT_REDIRECT_URL = "webui:landing"
