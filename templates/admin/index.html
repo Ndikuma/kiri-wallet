@@ -1,0 +1,119 @@
+{% extends "admin/base.html" %}
+{% load i18n static %}
+
+{% block title %}Dashboard | {{ site_title }}{% endblock %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'admin/dashboard.css' %}">
+{% endblock %}
+
+{% block content %}
+<main class="btc-dashboard">
+  <header class="btc-dashboard-head">
+    <div>
+      <span class="btc-eyebrow">Operations overview</span>
+      <h1>Good {{ dashboard_greeting }}, {{ request.user.get_short_name|default:request.user.username }}</h1>
+      <p>Deposits, balances, exchange, and settlement activity across the wallet.</p>
+    </div>
+    <div class="btc-provider-row">
+      <a class="btc-provider-chip {% if provider_status.lightning.healthy %}is-live{% endif %}" href="{{ provider_status.lightning.url }}">
+        <span class="btc-provider-dot"></span> Lightning: {% if provider_status.lightning.healthy %}Live{% else %}Setup{% endif %}
+      </a>
+      <a class="btc-provider-chip {% if provider_status.amatopay.healthy %}is-live{% endif %}" href="{{ provider_status.amatopay.url }}">
+        <span class="btc-provider-dot"></span> AmatoPay: {% if provider_status.amatopay.healthy %}Live{% else %}Setup{% endif %}
+      </a>
+      <span class="btc-provider-chip is-live">
+        <span class="btc-provider-dot"></span> Network: {{ provider_status.network|capfirst }}
+      </span>
+    </div>
+  </header>
+
+  <section class="btc-stat-grid" aria-label="Key wallet statistics">
+    {% for card in stat_cards %}
+      <a class="btc-stat-card tone-{{ card.tone }}" href="{{ card.url }}">
+        <span class="btc-stat-icon material-symbols-outlined">{{ card.icon }}</span>
+        <span class="btc-stat-label">{{ card.label }}</span>
+        <strong>{{ card.value }}</strong>
+        <small>{{ card.detail }}</small>
+      </a>
+    {% endfor %}
+  </section>
+
+  <section class="btc-chart-grid" aria-label="Deposit analytics">
+    <div class="btc-panel">
+      <div class="btc-panel-head">
+        <div><span class="btc-eyebrow">Last 14 days</span><h2>Confirmed deposit volume</h2></div>
+        <div class="btc-chart-total"><strong>{{ period_summary.volume }}</strong><small>30-day total</small></div>
+      </div>
+      <div class="btc-bar-chart" role="img" aria-label="Daily confirmed deposit volume for the last fourteen days">
+        {% for point in volume_chart %}
+          <div class="btc-bar-column" title="{{ point.label }}: {{ point.volume }} across {{ point.count }} deposits">
+            <span class="btc-bar-value">{{ point.short_volume }}</span>
+            <span class="btc-bar" style="--bar-height:{{ point.height }}%"></span>
+            <small>{{ point.short_label }}</small>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="btc-chart-caption"><span>{{ volume_chart.0.label }}</span><span>Daily confirmed deposits · sats</span><span>{{ volume_chart.13.label }}</span></div>
+    </div>
+
+    <div class="btc-panel">
+      <div class="btc-panel-head"><div><span class="btc-eyebrow">Last 30 days</span><h2>Transaction status</h2></div><span class="btc-status-total">{{ status_total }} total</span></div>
+      <div class="btc-status-breakdown">
+        {% for status in status_breakdown %}
+          <div class="btc-status-row">
+            <div><span class="btc-legend btc-legend-{{ status.tone }}"></span><strong>{{ status.label }}</strong></div>
+            <b>{{ status.percentage }}%</b>
+            <span class="btc-progress"><i class="btc-progress-{{ status.tone }}" style="width:{{ status.percentage }}%"></i></span>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <div class="btc-columns">
+    <section class="btc-panel">
+      <div class="btc-panel-head">
+        <div><span class="btc-eyebrow">Last 30 days</span><h2>Deposit &amp; POS performance</h2></div>
+        <a href="{% url 'admin:wallet_wallettransaction_changelist' %}">View transactions →</a>
+      </div>
+      <div class="btc-period-grid">
+        <div><span>Confirmed deposits</span><strong>{{ period_summary.deposits }}</strong></div>
+        <div><span>Deposit volume</span><strong>{{ period_summary.volume }}</strong></div>
+        <div><span>POS charges paid today</span><strong>{{ period_summary.pos_paid }}</strong></div>
+        <div><span>POS BIF settled today</span><strong>{{ period_summary.pos_bif }}</strong></div>
+      </div>
+      <div class="btc-panel-head"><div><span class="btc-eyebrow">Live activity</span><h2>Recent transactions</h2></div></div>
+      <div class="btc-table-wrap">
+        <table class="btc-table">
+          <thead><tr><th>User</th><th>Type</th><th>Status</th><th class="is-number">Amount</th></tr></thead>
+          <tbody>
+          {% for tx in recent_transactions %}
+            <tr>
+              <td>{{ tx.user.username }}<small>{{ tx.created_at|date:"d M, H:i" }}</small></td>
+              <td>{{ tx.get_type_display }}</td>
+              <td><span class="btc-status-badge {{ tx.status }}">{{ tx.get_status_display }}</span></td>
+              <td class="is-number">{{ tx.amount }} {{ tx.currency|upper }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="btc-empty">No transactions have been created yet.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <aside class="btc-panel">
+      <div class="btc-panel-head"><div><span class="btc-eyebrow">Attention</span><h2>Operations queue</h2></div></div>
+      <div class="btc-operations">
+        {% for item in operations %}
+          <a href="{{ item.url }}"><span><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></span><b>{{ item.value }}</b></a>
+        {% endfor %}
+      </div>
+    </aside>
+  </div>
+
+  <p class="btc-generated">Updated {{ dashboard_generated_at|date:"d M Y, H:i:s T" }}</p>
+</main>
+{% endblock %}

@@ -15,6 +15,10 @@ top-up rail through AmatoPay's merchant checkout API.
   - **AmatoPay BIF top-up**: create an AmatoPay hosted-checkout session against a payer's mobile-money alias; poll it and credit `bif_balance` once AmatoPay reports the payment collected.
 - `webui` — a server-rendered dashboard (session-auth, separate from the JWT API): landing page, sign up/sign in, and a page per feature above (deposit, withdraw, exchange, POS, top-up, transactions, on-chain address). Same design system (`static/css/app.css`, light/dark) as this team's other retail project, retinted to Bitcoin orange.
 
+## Admin (`/admin/`)
+
+Runs on [django-unfold](https://github.com/unfoldadmin/django-unfold) — Bitcoin-orange theme, a grouped sidebar (Wallets, Bitcoin, BIF, Platform & access) with live pending-item badges, and a custom operations dashboard (`templates/admin/index.html`, `config/admin_dashboard.py`) with sats/BIF stat cards, a 14-day deposit-volume chart, a transaction status breakdown, and an operations queue — same pattern as this team's AmatoPay admin, adapted to this wallet's own data instead of copied wholesale. `BitcoinHDWallet` and `PlatformBitcoinAddress` are read-only in the admin (no add/delete) — they're only ever created by `wallet/onchain_keys.py`, and the encrypted root key is never rendered.
+
 ## Setup
 
 ```bash

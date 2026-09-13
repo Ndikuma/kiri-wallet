@@ -16,6 +16,7 @@ cryptography==50.0.1
 Django==6.0.8
 django-celery-beat==2.9.0
 django-timezone-field==7.2.2
+django-unfold==0.106.0
 django_celery_results==2.6.0
 djangorestframework==3.18.1
 djangorestframework_simplejwt==5.5.1

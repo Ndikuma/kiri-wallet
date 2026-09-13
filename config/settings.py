@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 import os
 
+from django.urls import reverse_lazy
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -24,12 +25,17 @@ ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.
 
 
 INSTALLED_APPS = [
+    "unfold",
+    "unfold.contrib.filters",
+    "unfold.contrib.forms",
+
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.humanize",
 
     "rest_framework",
     "rest_framework_simplejwt",
@@ -158,3 +164,80 @@ CELERY_ENABLE_UTC = True
 CELERY_TASK_DEFAULT_QUEUE = "btc_wallet"
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+
+# ── Django admin (Unfold) ───────────────────────────────────
+
+UNFOLD = {
+    "SITE_TITLE": "BTC Wallet Admin",
+    "SITE_HEADER": "BTC Wallet",
+    "SITE_SUBHEADER": "Bitcoin, Lightning & BIF operations",
+    "SITE_SYMBOL": "currency_bitcoin",
+    "SITE_URL": "/",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "DASHBOARD_CALLBACK": "config.admin_dashboard.dashboard_callback",
+    "COLORS": {
+        # Bitcoin-orange primary scale (close to Tailwind's "orange", centered on #f7931a).
+        "primary": {
+            "50": "255 247 237",
+            "100": "255 237 213",
+            "200": "254 215 170",
+            "300": "253 186 116",
+            "400": "251 146 60",
+            "500": "247 147 26",
+            "600": "234 88 12",
+            "700": "194 65 12",
+            "800": "154 52 18",
+            "900": "124 45 18",
+            "950": "67 20 7",
+        },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "Overview",
+                "items": [
+                    {"title": "Dashboard", "icon": "space_dashboard", "link": reverse_lazy("admin:index")},
+                ],
+            },
+            {
+                "title": "Wallets",
+                "separator": True,
+                "items": [
+                    {"title": "Wallets", "icon": "account_balance_wallet", "link": reverse_lazy("admin:wallet_wallet_changelist")},
+                    {"title": "Transactions", "icon": "receipt_long", "link": reverse_lazy("admin:wallet_wallettransaction_changelist"), "badge": "config.admin_badges.pending_deposits", "badge_variant": "warning"},
+                    {"title": "Withdrawal fee policies", "icon": "percent", "link": reverse_lazy("admin:wallet_withdrawalfeepolicy_changelist")},
+                ],
+            },
+            {
+                "title": "Bitcoin",
+                "separator": True,
+                "items": [
+                    {"title": "HD wallet", "icon": "key", "link": reverse_lazy("admin:wallet_bitcoinhdwallet_changelist")},
+                    {"title": "Platform addresses", "icon": "qr_code_2", "link": reverse_lazy("admin:wallet_platformbitcoinaddress_changelist")},
+                ],
+            },
+            {
+                "title": "BIF",
+                "separator": True,
+                "items": [
+                    {"title": "Exchange rates", "icon": "currency_exchange", "link": reverse_lazy("admin:wallet_exchangerate_changelist")},
+                    {"title": "POS charges", "icon": "point_of_sale", "link": reverse_lazy("admin:wallet_poscharge_changelist"), "badge": "config.admin_badges.pending_pos_charges", "badge_variant": "warning"},
+                    {"title": "AmatoPay top-ups", "icon": "sync_alt", "link": reverse_lazy("admin:wallet_amatopaycheckoutsession_changelist"), "badge": "config.admin_badges.pending_topups", "badge_variant": "warning"},
+                ],
+            },
+            {
+                "title": "Platform & access",
+                "separator": True,
+                "items": [
+                    {"title": "Users", "icon": "person", "link": reverse_lazy("admin:accounts_user_changelist")},
+                    {"title": "Groups", "icon": "shield_person", "link": reverse_lazy("admin:auth_group_changelist")},
+                    {"title": "Periodic tasks", "icon": "schedule", "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist")},
+                ],
+            },
+        ],
+    },
+}
