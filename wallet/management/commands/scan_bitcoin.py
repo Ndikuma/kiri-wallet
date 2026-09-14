@@ -51,15 +51,28 @@ class Command(BaseCommand):
     def _scan_once(self):
         service = CustodialBitcoinService()
         try:
-            processed = service.scan_all_users()
+            result = service.scan_all_users()
         except Exception as exc:  # noqa: BLE001
             logger.exception("On-chain scan failed: %s", exc)
             self.stderr.write(self.style.ERROR(f"Scan failed: {exc}"))
             return
 
+        processed = result["processed"]
+        failed = result["failed"]
+
         if processed:
             logger.info("On-chain scan processed %d deposit(s): %s", len(processed), processed)
             self.stdout.write(self.style.SUCCESS(f"Processed {len(processed)} deposit(s)."))
-        else:
+        elif not failed:
             logger.debug("On-chain scan: no new deposits")
             self.stdout.write("No new deposits.")
+
+        if failed:
+            # Distinct from "no new deposits": these addresses could not be checked at all
+            # (e.g. the configured explorer provider is unreachable) — never conflate the two.
+            logger.warning("On-chain scan: %d address(es) could not be checked: %s", len(failed), failed)
+            self.stderr.write(self.style.ERROR(
+                f"{len(failed)} address(es) could NOT be checked (explorer unreachable?):"
+            ))
+            for item in failed:
+                self.stderr.write(self.style.ERROR(f"  - {item['address']}: {item['error']}"))

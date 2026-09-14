@@ -97,9 +97,15 @@ class Command(BaseCommand):
         service = CustodialBitcoinService()
         while True:
             try:
-                processed = await asyncio.to_thread(service.scan_all_users)
+                result = await asyncio.to_thread(service.scan_all_users)
+                processed = result["processed"]
+                failed = result["failed"]
                 if processed:
                     logger.info("On-chain scan processed %d deposit(s): %s", len(processed), processed)
+                if failed:
+                    # Distinct from "nothing new": these addresses could not be checked at
+                    # all (e.g. the explorer provider is unreachable) — surfaced, not silent.
+                    logger.warning("On-chain scan: %d address(es) could not be checked: %s", len(failed), failed)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("On-chain scan failed: %s", exc)
             await asyncio.sleep(interval)

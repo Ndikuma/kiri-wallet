@@ -158,12 +158,16 @@ LND_CERT_PATH = os.getenv("LND_CERT_PATH", str(BASE_DIR / "tls.cert"))
 AMATOPAY_API_KEY = os.getenv("AMATOPAY_API_KEY", "")
 AMATOPAY_BASE_URL = os.getenv("AMATOPAY_BASE_URL", "http://localhost:8000")
 
-# On-chain Bitcoin (btclib). Defaults to testnet on purpose, so
-# switching to real funds ("mainnet") is a deliberate .env change, not an
-# accident. WALLET_ENCRYPTION_KEY encrypts custodied private keys at rest
+# On-chain Bitcoin (btclib). Defaults to testnet4 on purpose, so switching to
+# real funds ("mainnet") is a deliberate .env change, not an accident.
+# testnet4 (not "testnet" = testnet3, which is largely dead in practice) is
+# the modern usable test network — see wallet/esplora_client.py's
+# module docstring for why testnet3/testnet4 are NOT interchangeable (same
+# address format, completely different chains) and which provider serves
+# which. WALLET_ENCRYPTION_KEY encrypts custodied private keys at rest
 # (wallet/onchain_keys.py) — generate one with:
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-BITCOIN_NETWORK = os.getenv("BITCOIN_NETWORK", "testnet")
+BITCOIN_NETWORK = os.getenv("BITCOIN_NETWORK", "testnet4")
 WALLET_ENCRYPTION_KEY = os.getenv("WALLET_ENCRYPTION_KEY", "")
 
 

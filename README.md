@@ -71,7 +71,7 @@ celery -A config beat -l info    # if scheduling poll_blink_invoice_update perio
 | `BLINK_API_KEY` | Blink custodial Lightning wallet API key ([dashboard.blink.sv](https://dashboard.blink.sv)). Required for all Lightning deposit/withdraw/POS features. |
 | `LND_REST_URL`, `LND_MACAROON`, `LND_CERT_PATH` | Optional direct LND node access (`wallet/lnd_service.py`), not required for the Blink-based flows. |
 | `AMATOPAY_API_KEY`, `AMATOPAY_BASE_URL` | AmatoPay merchant secret key (`sk_...`) and base URL, for BIF top-ups. |
-| `BITCOIN_NETWORK` | `testnet` (default) or `mainnet` — which chain the platform's HD wallet and every derived address belong to. |
+| `BITCOIN_NETWORK` | `testnet4` (default), `testnet` (testnet3, largely dead in practice), or `mainnet` — which chain the platform's HD wallet and every derived address belong to. testnet3 and testnet4 share the *same address format* but are separate chains with separate transaction histories — see the on-chain section below. |
 | `WALLET_ENCRYPTION_KEY` | Fernet key encrypting the platform's BIP32 root xprv at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Back this up along with the database** — losing it loses every on-chain address's funds. |
 | `REDIS_URL` | Celery broker, only needed if you run the polling fallback task. |
 | `LOG_LEVEL` | Console log level (default `INFO`) — without a `LOGGING` config, Python drops `.info()`/`.debug()` calls entirely, so this is what makes `worker`/`blink_ws`/`scan_bitcoin` actually visible. |
@@ -117,6 +117,25 @@ Wallet (`/api/wallet/`), all requiring `Authorization: Bearer <access_token>`:
   first version; a production deployment should maintain a local UTXO cache
   updated by the deposit scanner instead of re-querying an explorer for every
   address on every withdrawal.
+- **Scanning is 100% our own HTTP calls to a public block explorer** —
+  `wallet/esplora_client.py` hits blockstream.info/mempool.space's REST APIs
+  directly (the same ones a browser or `curl` would). btclib does no network
+  I/O of its own; it only builds/signs transactions.
+- **testnet3 ("testnet") and testnet4 are separate blockchains that share the
+  same address format.** An address looks identical and valid on both, but a
+  deposit made on one chain will never appear when the other is queried —
+  there is no cross-chain fallback that makes sense here, only "which chain
+  did the coins actually land on." Almost every current faucet/wallet issues
+  testnet4 now (testnet3 is hard to get new blocks on), which is why that's
+  the default. Critically, **blockstream.info has no testnet4 API at all**
+  (its `/testnet4/` path silently serves the generic explorer webpage instead
+  of erroring) — mempool.space is the only provider for testnet4, so verify
+  it's reachable from wherever you actually run `worker`/`scan_bitcoin`:
+  `curl https://mempool.space/testnet4/api/blocks/tip/height`. If a scan
+  can't reach any configured provider at all, it's reported distinctly
+  (`scan_bitcoin`'s "N address(es) could NOT be checked", or a `worker` log
+  warning) rather than being silently folded into "no new deposits" — those
+  are very different situations and the command output never conflates them.
 - **`bolt11`** (used only for validating a *withdrawal* Lightning invoice's
   amount) depends on the native `coincurve` package, which has no prebuilt
   wheel yet for this machine's Python version (3.14 — very new). It's guarded

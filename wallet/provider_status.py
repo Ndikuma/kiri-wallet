@@ -68,14 +68,19 @@ def get_onchain_status() -> dict[str, Any]:
     )
 
     provider_balance = 0
+    provider_incomplete = False
     provider_message = ""
     provider_online = False
     try:
         from wallet.bitcoin import CustodialBitcoinService
 
-        provider_balance = CustodialBitcoinService().get_platform_balance()
-        provider_online = True
-        provider_message = "On-chain wallet provider connected."
+        provider_balance, provider_incomplete = CustodialBitcoinService().get_platform_balance()
+        provider_online = not provider_incomplete
+        provider_message = (
+            "On-chain wallet provider connected."
+            if not provider_incomplete
+            else "Some addresses could not be checked (explorer unreachable?) — balance may be an undercount."
+        )
     except Exception as exc:
         provider_message = str(exc)
 
@@ -83,6 +88,7 @@ def get_onchain_status() -> dict[str, Any]:
         "success": provider_online,
         "configured": True,
         "provider_balance_sats": provider_balance,
+        "provider_balance_incomplete": provider_incomplete,
         "confirmed_deposits_sats": _to_int(deposit_summary["confirmed_sats"]),
         "pending_deposits_sats": _to_int(deposit_summary["pending_sats"]),
         "addresses": _to_int(address_summary["addresses"]),

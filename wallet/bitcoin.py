@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 
 import qrcode
 from django.db import transaction as db_transaction
@@ -54,6 +55,8 @@ from wallet.models import (
     Wallet as UserWallet,
     WalletTransaction,
 )
+
+logger = logging.getLogger(__name__)
 
 SIGHASH_ALL = 1
 
@@ -87,27 +90,34 @@ class CustodialBitcoinService:
 
         return {"address": wallet.bitcoin_address, "qr": self.generate_qr(wallet.bitcoin_address)}
 
-    def get_platform_balance(self) -> int:
-        """Sum of confirmed balances across every address the platform has ever generated."""
+    def get_platform_balance(self) -> tuple[int, bool]:
+        """Sum of confirmed balances across every address the platform has ever generated.
+
+        Returns (total_sats, had_failures). had_failures=True means at least one
+        address could not be checked (e.g. explorer unreachable) — the total is
+        then an undercount, never a confirmed zero; the caller must not present
+        it as if every address was successfully checked.
+        """
         from wallet.esplora_client import get_address_balance
 
         total = 0
+        had_failures = False
         for row in PlatformBitcoinAddress.objects.all().iterator():
             try:
                 total += get_address_balance(row.address)
-            except EsploraError:
-                continue
-        return total
+            except EsploraError as exc:
+                had_failures = True
+                logger.warning("Could not fetch balance for %s: %s", row.address, exc)
+        return total, had_failures
 
     # ─────────────────────────────────────
     # SCAN CHAIN
     # ─────────────────────────────────────
 
     def scan_address_transactions(self, address: str) -> list[dict]:
-        try:
-            utxos = get_utxos(address)
-        except EsploraError:
-            return []
+        """Raises EsploraError if no configured provider could be reached — the caller decides
+        how to handle that; it must never be silently swallowed into a false 'no deposits'."""
+        utxos = get_utxos(address)
         return [
             {
                 "txid": u["txid"],
@@ -162,16 +172,29 @@ class CustodialBitcoinService:
 
         return results
 
-    def scan_all_users(self) -> list[str]:
+    def scan_all_users(self) -> dict:
+        """Returns {"processed": [txid, ...], "failed": [{"address", "wallet_id", "error"}, ...]}.
+
+        A per-address explorer failure (e.g. the only configured provider being
+        unreachable) does not abort the whole batch, but it is never silently
+        treated as "this address has no deposits" — that distinction matters:
+        a real negative result and "we couldn't check" must stay visibly
+        different to whoever is reading scan_bitcoin/worker's output.
+        """
         wallets = UserWallet.objects.select_related("user")
-        results = []
+        processed = []
+        failed = []
         for wallet in wallets:
             if not wallet.bitcoin_address:
                 address_row = onchain_keys.create_address(label=f"user-{wallet.user_id}")
                 wallet.bitcoin_address = address_row.address
                 wallet.save(update_fields=["bitcoin_address"])
-            results.extend(self.process_deposits(wallet))
-        return results
+            try:
+                processed.extend(self.process_deposits(wallet))
+            except EsploraError as exc:
+                logger.warning("Could not scan %s (wallet %s): %s", wallet.bitcoin_address, wallet.pk, exc)
+                failed.append({"wallet_id": str(wallet.pk), "address": wallet.bitcoin_address, "error": str(exc)})
+        return {"processed": processed, "failed": failed}
 
     # ─────────────────────────────────────
     # WITHDRAW

@@ -21,19 +21,46 @@ DUST_THRESHOLD_SATS = 546
 
 
 def _providers() -> list[str]:
+    """
+    Base URLs to try, in order, for the configured BITCOIN_NETWORK.
+
+    IMPORTANT: "testnet" (testnet3) and "testnet4" are *different chains* —
+    same address format (so an address looks valid on both), completely
+    different genesis block and transaction history. A deposit made on one
+    will never show up when querying the other. They must not be mixed as
+    if they were interchangeable fallbacks for the same data (that was a
+    real bug here: testnet3 was checked first, got a valid-but-empty
+    response, and testnet4 — where real testnet coins actually are today —
+    was never even tried).
+
+    blockstream.info has no testnet4 API (its /testnet4/ path just serves
+    the generic explorer webpage, not real API data) — only mempool.space
+    does. testnet3 is largely defunct in practice (very few faucets still
+    issue it), so testnet4 is what "testnet" almost always means today.
+    """
     network = getattr(settings, "BITCOIN_NETWORK", "testnet")
     if network == "mainnet":
         return ["https://blockstream.info/api", "https://mempool.space/api"]
-    # testnet/regtest/signet: blockstream serves testnet3, mempool.space serves testnet4.
-    # Both are fine as alternate providers for address/UTXO/broadcast purposes.
-    return ["https://blockstream.info/testnet/api", "https://mempool.space/testnet4/api"]
+    if network == "testnet4":
+        return ["https://mempool.space/testnet4/api"]
+    if network == "testnet":
+        return ["https://blockstream.info/testnet/api", "https://mempool.space/testnet/api"]
+    if network == "signet":
+        return ["https://blockstream.info/signet/api", "https://mempool.space/signet/api"]
+    raise EsploraError(
+        f"No public block explorer for BITCOIN_NETWORK={network!r} (e.g. regtest is a private "
+        "chain nobody else can serve) — point this at your own Esplora instance instead."
+    )
 
 
 class EsploraError(Exception):
     pass
 
 
-def _get(path: str, timeout: int = 15) -> Any:
+def _get(path: str, timeout: tuple[int, int] = (3, 15)) -> Any:
+    """`timeout` is (connect, read) seconds — a short connect timeout so a fully
+    unreachable provider fails fast instead of retrying across its resolved IPs
+    for a long time before we move on to the next provider."""
     errors = []
     for base in _providers():
         try:
@@ -45,7 +72,7 @@ def _get(path: str, timeout: int = 15) -> Any:
     raise EsploraError(f"All block explorer providers failed for GET {path}: {'; '.join(errors)}")
 
 
-def _post(path: str, data: str, timeout: int = 20) -> str:
+def _post(path: str, data: str, timeout: tuple[int, int] = (3, 20)) -> str:
     errors = []
     for base in _providers():
         try:
