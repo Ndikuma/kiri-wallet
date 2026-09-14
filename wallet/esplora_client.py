@@ -4,20 +4,75 @@ mempool.space). Used for UTXO/balance lookups, fee estimation, and
 broadcasting signed transactions — python-bitcoinlib itself has no network
 layer, it only builds/signs/serializes.
 
-Tries providers in order and falls back on failure, since either can be
-unreachable/rate-limited depending on the deployment network.
+Resilience has two layers:
+  1. One quick retry on a transient *server-side* blip — a 502/503/504
+     response (`_SESSION`'s Retry policy below). Deliberately not retried:
+     connection failures/timeouts — see the comment on `_RETRY` for why
+     retrying those is pure wasted latency here, not real resilience.
+  2. Falling through to the next configured provider in `_providers()` when
+     the current one fails outright.
+
+For mainnet/testnet3/signet there are two real, independent providers to
+fail over between. For testnet4 there is only one: mempool.space is the
+only major free public Esplora-API provider that supports it — blockstream.info
+has no testnet4 API at all (confirmed: its /testnet4/ path just serves the
+generic explorer webpage, not real API data). If mempool.space is
+unreachable from your network, no amount of retrying finds a second
+provider that doesn't exist; the fix is checking your own network path
+(firewall/VPN/DNS) to mempool.space, or running your own Esplora/electrs
+instance and adding it here once you have one you trust.
 """
 from __future__ import annotations
 
 import logging
+import socket
 from typing import Any
 
 import requests
+import urllib3.util.connection as urllib3_connection
 from django.conf import settings
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
 DUST_THRESHOLD_SATS = 546
+
+# Prefer IPv4: some networks (containers, certain VPS/cloud setups) advertise
+# IPv6 DNS records for a host but have no working IPv6 route, which surfaces
+# as "Network is unreachable" even though IPv4 to the same host works fine.
+# This is a process-wide, best-effort preference — harmless where IPv6 works,
+# and it only affects address selection, never blocks a genuine IPv6-only host.
+def _prefer_ipv4_gai_family():
+    return socket.AF_INET
+
+
+urllib3_connection.allowed_gai_family = _prefer_ipv4_gai_family
+
+# Retry only on a real HTTP response with a 5xx status (one quick retry,
+# ~0.3s backoff) — that's a connection that already succeeded, so a retry is
+# cheap and can genuinely recover a transient server-side blip.
+#
+# Deliberately connect=0/read=0 (no retry on connection errors/timeouts): a
+# host can resolve to several IPs (mempool.space resolves to 7), and the
+# socket layer already tries every one of them in turn within a *single*
+# attempt — each retry we added on top just repeated that whole multi-IP
+# sweep again, turning "provider is down" into a multi-times-longer stall
+# for zero extra chance of success, before we ever reach the next provider
+# or report the failure. Measured directly: retries=1 here took this from
+# ~21s to ~42s to fail against an unreachable host, for no benefit.
+_RETRY = Retry(
+    total=1,
+    connect=0,
+    read=0,
+    status=1,
+    backoff_factor=0.3,
+    status_forcelist=(500, 502, 503, 504),
+    allowed_methods=("GET", "POST"),
+)
+_SESSION = requests.Session()
+_SESSION.mount("https://", HTTPAdapter(max_retries=_RETRY))
+_SESSION.mount("http://", HTTPAdapter(max_retries=_RETRY))
 
 
 def _providers() -> list[str]:
@@ -57,29 +112,32 @@ class EsploraError(Exception):
     pass
 
 
-def _get(path: str, timeout: tuple[int, int] = (3, 15)) -> Any:
-    """`timeout` is (connect, read) seconds — a short connect timeout so a fully
-    unreachable provider fails fast instead of retrying across its resolved IPs
-    for a long time before we move on to the next provider."""
+def _get(path: str, timeout: tuple[int, int] = (2, 15)) -> Any:
+    """`timeout` is (connect, read) seconds per attempt — short enough that a fully
+    unreachable provider exhausts its retries and fails fast instead of stalling
+    the whole scan cycle, but this still means testnet4 with just one provider
+    configured has nothing left to fall through to once that provider is down."""
     errors = []
     for base in _providers():
         try:
-            r = requests.get(f"{base}{path}", timeout=timeout)
+            r = _SESSION.get(f"{base}{path}", timeout=timeout)
             r.raise_for_status()
             return r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text
         except requests.RequestException as exc:
+            logger.debug("Provider %s failed for GET %s: %s", base, path, exc)
             errors.append(f"{base}: {exc}")
     raise EsploraError(f"All block explorer providers failed for GET {path}: {'; '.join(errors)}")
 
 
-def _post(path: str, data: str, timeout: tuple[int, int] = (3, 20)) -> str:
+def _post(path: str, data: str, timeout: tuple[int, int] = (2, 20)) -> str:
     errors = []
     for base in _providers():
         try:
-            r = requests.post(f"{base}{path}", data=data, timeout=timeout)
+            r = _SESSION.post(f"{base}{path}", data=data, timeout=timeout)
             r.raise_for_status()
             return r.text.strip()
         except requests.RequestException as exc:
+            logger.debug("Provider %s failed for POST %s: %s", base, path, exc)
             errors.append(f"{base}: {getattr(exc.response, 'text', '') or exc}")
     raise EsploraError(f"All block explorer providers failed for POST {path}: {'; '.join(errors)}")
 

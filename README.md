@@ -136,6 +136,21 @@ Wallet (`/api/wallet/`), all requiring `Authorization: Bearer <access_token>`:
   (`scan_bitcoin`'s "N address(es) could NOT be checked", or a `worker` log
   warning) rather than being silently folded into "no new deposits" — those
   are very different situations and the command output never conflates them.
+- **Resilience against a flaky/unreachable provider is real but bounded.**
+  `wallet/esplora_client.py` prefers IPv4 (some networks advertise IPv6 DNS
+  records with no working IPv6 route, which otherwise surfaces as "Network is
+  unreachable"), retries once on a 502/503/504 (a connection that already
+  succeeded — cheap to retry), and falls through to the next configured
+  provider on outright failure. It deliberately does **not** retry connection
+  failures/timeouts: a host can resolve to several IPs (mempool.space
+  resolves to 7), and the socket layer already tries every one of them
+  within a single attempt — retrying on top of that just repeats the whole
+  multi-IP sweep for no extra chance of success (measured directly: it roughly
+  doubled the time to fail, from ~15s to ~30s+, against a genuinely
+  unreachable host). For testnet4 specifically, that also means there's
+  nothing to fall through *to* — mempool.space is the only provider — so a
+  scan against it fails in ~15s rather than falling back to a nonexistent
+  second option.
 - **`bolt11`** (used only for validating a *withdrawal* Lightning invoice's
   amount) depends on the native `coincurve` package, which has no prebuilt
   wheel yet for this machine's Python version (3.14 — very new). It's guarded
