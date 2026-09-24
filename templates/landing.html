@@ -1,13 +1,13 @@
 {% extends "public_base.html" %}
 
-{% block title %}BTC Wallet — Bitcoin, Lightning &amp; BIF{% endblock %}
+{% block title %}Kiri Wallet — Bitcoin, Lightning &amp; BIF{% endblock %}
 
 {% block content %}
 <section class="hero-band">
     <div class="hero-inner">
         <span class="hero-eyebrow">Bitcoin · Lightning · BIF</span>
         <h1>One wallet for sats and Burundian Francs.</h1>
-        <p>Deposit and withdraw Bitcoin over Lightning or on-chain, exchange straight to BIF at a live rate, accept point-of-sale charges settled in BIF, and top up via AmatoPay mobile money.</p>
+        <p>Deposit and withdraw Bitcoin over Lightning or on-chain, exchange straight to BIF at a live rate, and accept point-of-sale charges settled in BIF.</p>
         <div class="hero-actions">
             <a class="button btn-lg" href="{% url 'webui:register' %}">Create your wallet</a>
             <a class="button button-light btn-lg" href="{% url 'webui:login' %}">Sign in</a>
@@ -48,11 +48,6 @@
             <p>Quote a charge in sats, lock in the BIF equivalent, and get paid in BIF the instant the Lightning invoice is settled.</p>
         </div>
         <div class="feature-card">
-            <div class="fc-icon">{% include "partials/sidebar_icon.html" with icon_name="topup" %}</div>
-            <h3>AmatoPay top-up</h3>
-            <p>Top up your BIF balance directly from mobile money through AmatoPay's hosted checkout.</p>
-        </div>
-        <div class="feature-card">
             <div class="fc-icon">{% include "partials/sidebar_icon.html" with icon_name="transactions" %}</div>
             <h3>One transaction ledger</h3>
             <p>Every sats and BIF movement — deposits, withdrawals, exchanges, POS settlements, top-ups — in a single history.</p>
@@ -74,7 +69,7 @@
         <div class="step-card">
             <b>2</b>
             <h3>Fund it</h3>
-            <p>Deposit over Lightning, on-chain, or top up BIF directly via AmatoPay mobile money.</p>
+            <p>Deposit over Lightning or on-chain, straight into your wallet.</p>
         </div>
         <div class="step-card">
             <b>3</b>

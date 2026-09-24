@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f7931a">
-    <title>{% block title %}BTC Wallet{% endblock %} · BTC Wallet</title>
+    <title>{% block title %}Kiri Wallet{% endblock %} · Kiri Wallet</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -15,7 +15,7 @@
 <body class="public auth-page">
     <a href="{% url 'webui:landing' %}" class="auth-center-brand">
         <span class="auth-center-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span>
-        BTC Wallet
+        Kiri Wallet
     </a>
 
     <div class="auth-center-card">
@@ -34,7 +34,7 @@
         <span class="icon-chip">{% include "partials/sidebar_icon.html" with icon_name="swap" %} BIF exchange</span>
     </div>
 
-    <p class="auth-center-foot">© {% now "Y" %} BTC Wallet</p>
+    <p class="auth-center-foot">© {% now "Y" %} Kiri Wallet</p>
 
     <script src="{% static 'js/app.js' %}" defer></script>
     <script>

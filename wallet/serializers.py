@@ -93,13 +93,23 @@ class ExchangeConvertSerializer(serializers.Serializer):
 
 
 class POSChargeSerializer(serializers.ModelSerializer):
+    checkout_url = serializers.SerializerMethodField()
+    awaiting_delivery_confirmation = serializers.SerializerMethodField()
+
     class Meta:
         model = POSCharge
         fields = [
-            "id", "amount_sats", "bif_equivalent", "rate_bif_per_btc",
-            "payment_request", "memo", "status", "created_at", "paid_at",
+            "id", "charge_type", "amount_sats", "bif_equivalent", "rate_bif_per_btc",
+            "payment_request", "payer_alias", "checkout_url", "awaiting_delivery_confirmation",
+            "memo", "status", "created_at", "paid_at",
         ]
         read_only_fields = fields
+
+    def get_checkout_url(self, obj) -> str:
+        return obj.amatopay_session.checkout_url if obj.amatopay_session_id else ""
+
+    def get_awaiting_delivery_confirmation(self, obj) -> bool:
+        return bool(obj.amatopay_session_id and obj.amatopay_session.awaiting_delivery_confirmation)
 
 
 class POSChargeCreateSerializer(serializers.Serializer):
@@ -107,12 +117,21 @@ class POSChargeCreateSerializer(serializers.Serializer):
     memo = serializers.CharField(required=False, allow_blank=True, max_length=255, default="")
 
 
+class POSChargeBifCreateSerializer(serializers.Serializer):
+    amount_bif = serializers.IntegerField(min_value=1, help_text="Burundian Francs, collected via mobile money.")
+    payer_alias = serializers.CharField(max_length=160, help_text="Payer's mobile money alias, e.g. +25779000000")
+    memo = serializers.CharField(required=False, allow_blank=True, max_length=255, default="")
+    return_url = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
 class AmatoPayTopupSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AmatoPayCheckoutSession
         fields = [
-            "id", "session_id", "payer_alias", "amount_bif",
-            "checkout_url", "status", "created_at", "confirmed_at",
+            "id", "session_id", "payment_reference", "payer_alias", "payer_display_name",
+            "amount_bif", "checkout_url", "status", "payment_status",
+            "awaiting_delivery_confirmation", "delivery_confirmed_at",
+            "created_at", "confirmed_at",
         ]
         read_only_fields = fields
 
@@ -121,3 +140,13 @@ class AmatoPayTopupCreateSerializer(serializers.Serializer):
     amount_bif = serializers.IntegerField(min_value=1, help_text="Burundian Francs")
     payer_alias = serializers.CharField(max_length=160, help_text="Payer's mobile money alias, e.g. +25779000000")
     return_url = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class AmatoPayVerifyAliasSerializer(serializers.Serializer):
+    payer_alias = serializers.CharField(max_length=160, help_text="Mobile money alias to verify, e.g. +25779000000")
+
+
+class AmatoPayConfirmDeliverySerializer(serializers.Serializer):
+    secure_code = serializers.RegexField(
+        regex=r"^\d{6}$", help_text="The payer's six-digit AmatoPay release code.",
+    )

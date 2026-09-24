@@ -5,13 +5,14 @@ from rest_framework.response import Response
 
 from wallet import bif
 from wallet.amatopay_client import AmatoPayError
-from wallet.amatopay_topup import check_topup_session, create_topup_session
+from wallet.amatopay_topup import check_topup_session, confirm_delivery, create_topup_session, verify_payer_alias
 from wallet.bitcoin import CustodialBitcoinService
 from wallet.blink_wallet import BlinkWallet, BlinkWalletError
 from wallet.models import (
     AmatoPayCheckoutSession,
     ExchangeRate,
     POSCharge,
+    POSChargeStatus,
     TransactionStatus,
     TransactionType,
     Wallet,
@@ -20,12 +21,15 @@ from wallet.models import (
 from wallet.options import SETTINGS
 from wallet.provider_status import get_amatopay_status, get_blink_status, get_onchain_status
 from wallet.serializers import (
+    AmatoPayConfirmDeliverySerializer,
     AmatoPayTopupCreateSerializer,
     AmatoPayTopupSessionSerializer,
+    AmatoPayVerifyAliasSerializer,
     DepositRequestSerializer,
     ExchangeConvertSerializer,
     ExchangeQuoteSerializer,
     ExchangeRateSerializer,
+    POSChargeBifCreateSerializer,
     POSChargeCreateSerializer,
     POSChargeSerializer,
     WalletSerializer,
@@ -226,9 +230,9 @@ class WalletViewSet(viewsets.GenericViewSet):
         serializer = ExchangeQuoteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            quote = bif.get_quote(**serializer.validated_data)
+            quote = bif.get_quote(amount_sats=serializer.validated_data["amount_sats"])
         except ValueError as exc:
-            return Response({"success": False, "errors": [{"field": "amount", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+            return Response({"success": False, "errors": [{"field": "amount_sats", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
         return Response({"success": True, "data": quote})
 
     @action(detail=False, methods=["POST"], url_path="exchange/convert")
@@ -259,13 +263,60 @@ class WalletViewSet(viewsets.GenericViewSet):
         data["qr_code"] = invoice.get("qrCode", "")
         return Response({"success": True, "message": "POS charge created.", "data": data}, status=http_status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=["POST"], url_path="pos/charge/bif")
+    def pos_charge_bif(self, request):
+        wallet = self._wallet()
+        serializer = POSChargeBifCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            pos_charge, session = bif.create_pos_charge_bif_to_sats(wallet, **serializer.validated_data)
+        except AmatoPayError as exc:
+            return Response({"success": False, "errors": [{"field": "amount_bif", "message": str(exc)}]}, status=http_status.HTTP_502_BAD_GATEWAY)
+        except ValueError as exc:
+            return Response({"success": False, "errors": [{"field": "amount_bif", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "message": "POS charge created.", "data": POSChargeSerializer(pos_charge).data}, status=http_status.HTTP_201_CREATED)
+
     @action(detail=False, methods=["GET"], url_path=r"pos/charge/(?P<pos_charge_id>[^/.]+)")
     def pos_charge_status(self, request, pos_charge_id=None):
         try:
             pos_charge = POSCharge.objects.get(pk=pos_charge_id, wallet=self._wallet())
         except POSCharge.DoesNotExist:
             return Response({"success": False, "message": "POS charge not found."}, status=http_status.HTTP_404_NOT_FOUND)
+        if pos_charge.amatopay_session_id and pos_charge.status == POSChargeStatus.PENDING:
+            try:
+                check_topup_session(pos_charge.amatopay_session)
+                pos_charge.refresh_from_db()
+            except AmatoPayError:
+                pass
         return Response({"success": True, "data": POSChargeSerializer(pos_charge).data})
+
+    @action(detail=False, methods=["POST"], url_path=r"pos/charge/(?P<pos_charge_id>[^/.]+)/confirm-delivery")
+    def pos_charge_confirm_delivery(self, request, pos_charge_id=None):
+        try:
+            pos_charge = POSCharge.objects.get(pk=pos_charge_id, wallet=self._wallet())
+        except POSCharge.DoesNotExist:
+            return Response({"success": False, "message": "POS charge not found."}, status=http_status.HTTP_404_NOT_FOUND)
+        if not pos_charge.amatopay_session_id:
+            return Response({"success": False, "message": "This charge has no AmatoPay payment to confirm."}, status=http_status.HTTP_400_BAD_REQUEST)
+        serializer = AmatoPayConfirmDeliverySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            confirm_delivery(pos_charge.amatopay_session, serializer.validated_data["secure_code"])
+        except AmatoPayError as exc:
+            return Response({"success": False, "errors": [{"field": "secure_code", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "message": "Delivery confirmed.", "data": POSChargeSerializer(pos_charge).data})
+
+    # ── AmatoPay: alias verification (shared: POS BIF charge + top-up) ────
+
+    @action(detail=False, methods=["POST"], url_path="amatopay/verify-alias")
+    def amatopay_verify_alias(self, request):
+        serializer = AmatoPayVerifyAliasSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = verify_payer_alias(serializer.validated_data["payer_alias"])
+        except AmatoPayError as exc:
+            return Response({"success": False, "errors": [{"field": "payer_alias", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "data": result})
 
     # ── AmatoPay BIF top-up (mobile-money collection) ──────
 
@@ -294,3 +345,18 @@ class WalletViewSet(viewsets.GenericViewSet):
         except AmatoPayError as exc:
             return Response({"success": False, "errors": [{"field": "amatopay", "message": str(exc)}]}, status=http_status.HTTP_502_BAD_GATEWAY)
         return Response({"success": True, "data": AmatoPayTopupSessionSerializer(session).data})
+
+    @action(detail=False, methods=["POST"], url_path=r"bif/topup/(?P<session_id>[^/.]+)/confirm-delivery")
+    def bif_topup_confirm_delivery(self, request, session_id=None):
+        wallet = self._wallet()
+        try:
+            session = AmatoPayCheckoutSession.objects.get(session_id=session_id, wallet=wallet)
+        except AmatoPayCheckoutSession.DoesNotExist:
+            return Response({"success": False, "message": "Top-up session not found."}, status=http_status.HTTP_404_NOT_FOUND)
+        serializer = AmatoPayConfirmDeliverySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            session = confirm_delivery(session, serializer.validated_data["secure_code"])
+        except AmatoPayError as exc:
+            return Response({"success": False, "errors": [{"field": "secure_code", "message": str(exc)}]}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "message": "Delivery confirmed.", "data": AmatoPayTopupSessionSerializer(session).data})

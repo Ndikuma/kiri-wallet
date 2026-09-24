@@ -199,7 +199,7 @@ def dashboard_callback(request, context):
                 "url": _admin_url("admin:wallet_poscharge_changelist"),
             },
             {
-                "label": "AmatoPay top-ups pending",
+                "label": "Mobile-money top-ups pending",
                 "value": topup_pending,
                 "detail": "Awaiting mobile-money collection",
                 "url": _admin_url("admin:wallet_amatopaycheckoutsession_changelist"),
@@ -211,7 +211,7 @@ def dashboard_callback(request, context):
                 "url": _admin_url("admin:wallet_platformbitcoinaddress_changelist"),
             },
             {
-                "label": "AmatoPay top-ups (30d)",
+                "label": "Mobile-money top-ups (30d)",
                 "value": topup_confirmed_period["count"] or 0,
                 "detail": _bif(topup_confirmed_period["bif"]),
                 "url": _admin_url("admin:wallet_amatopaycheckoutsession_changelist"),

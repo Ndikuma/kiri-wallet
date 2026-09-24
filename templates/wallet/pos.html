@@ -7,7 +7,7 @@
     <div>
         <span class="eyebrow">Point of sale</span>
         <h1>Create a POS charge</h1>
-        <p>Quote a Lightning invoice in sats; the BIF equivalent is locked in now and credited to your BIF balance the instant it's paid.</p>
+        <p>Quote a charge in sats (paid over Lightning, settled in BIF) or in BIF (paid via mobile money, settled in sats).</p>
     </div>
 </section>
 
@@ -16,20 +16,37 @@
         <div class="form-section-head">
             <h2>New charge</h2>
         </div>
-        <form method="post">
+        <form method="post" id="pos-form">
             {% csrf_token %}
             <div class="form-grid">
-                <div class="field">
+                <div class="field full-span">
+                    <label>Charge type</label>
+                    <div class="icon-chip-row">
+                        <label class="icon-chip"><input type="radio" name="charge_type" value="sats_to_bif" {% if charge_type != "bif_to_sats" %}checked{% endif %}> Sats &rarr; BIF (Lightning)</label>
+                        <label class="icon-chip"><input type="radio" name="charge_type" value="bif_to_sats" {% if charge_type == "bif_to_sats" %}checked{% endif %}> BIF &rarr; Sats (mobile money)</label>
+                    </div>
+                </div>
+                <div class="field pos-field-sats" {% if charge_type == "bif_to_sats" %}hidden{% endif %}>
                     <label for="amount_sats">Amount (sats)</label>
-                    <input class="text-input" type="number" min="1000" step="1" name="amount_sats" id="amount_sats" required>
+                    <input class="text-input" type="number" min="1000" step="1" name="amount_sats" id="amount_sats">
+                </div>
+                <div class="field pos-field-bif" {% if charge_type != "bif_to_sats" %}hidden{% endif %}>
+                    <label for="amount_bif">Amount (BIF)</label>
+                    <input class="text-input" type="number" min="1" step="1" name="amount_bif" id="amount_bif">
+                </div>
+                <div class="field pos-field-bif" {% if charge_type != "bif_to_sats" %}hidden{% endif %}>
+                    <label for="payer_alias">Payer mobile alias</label>
+                    <input class="text-input" type="text" name="payer_alias" id="payer_alias" placeholder="+25779000000">
                 </div>
                 <div class="field">
                     <label for="memo">Memo <small>(optional)</small></label>
                     <input class="text-input" type="text" maxlength="255" name="memo" id="memo" placeholder="e.g. Coffee">
                 </div>
             </div>
+            <div id="pos-alias-verify-result" class="pos-field-bif" {% if charge_type != "bif_to_sats" %}hidden{% endif %} style="margin: 10px 0;"></div>
             <div class="form-actions">
-                <button class="button" type="submit">Create charge</button>
+                <button class="button button-light pos-field-bif" type="button" id="pos-verify-alias-btn" {% if charge_type != "bif_to_sats" %}hidden{% endif %}>Verify alias</button>
+                <button class="button" type="submit" id="pos-create-btn">Create charge</button>
             </div>
         </form>
 
@@ -38,15 +55,33 @@
             <div class="detail-section-head"><h3>Recent charges</h3></div>
             <div class="table-wrap">
                 <table>
-                    <thead><tr><th>Sats</th><th>BIF</th><th>Status</th><th>Date</th></tr></thead>
+                    <thead><tr><th>Type</th><th>Sats</th><th>BIF</th><th>Status</th><th>Date</th></tr></thead>
                     <tbody>
                         {% for c in recent_charges %}
                         <tr>
+                            <td class="muted">{% if c.charge_type == "bif_to_sats" %}BIF&rarr;sats{% else %}sats&rarr;BIF{% endif %}</td>
                             <td class="text-mono">{{ c.amount_sats }}</td>
                             <td class="text-mono">{{ c.bif_equivalent }}</td>
                             <td><span class="status-badge {% if c.status == 'paid' %}status-success{% elif c.status == 'expired' %}status-danger{% else %}status-warning{% endif %}">{{ c.get_status_display }}</span></td>
                             <td class="muted">{{ c.created_at|date:"M j, H:i" }}</td>
                         </tr>
+                        {% if c.amatopay_session.awaiting_delivery_confirmation %}
+                        <tr>
+                            <td colspan="5">
+                                <details>
+                                    <summary class="muted">Enter release code to settle this charge</summary>
+                                    <form method="post" action="{% url 'webui:pos_confirm_delivery' charge_id=c.id %}" style="margin-top:8px; display:flex; gap:8px; align-items:flex-end;">
+                                        {% csrf_token %}
+                                        <div class="field" style="margin:0;">
+                                            <label for="secure_code_{{ c.id }}">Release code</label>
+                                            <input class="text-input" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" name="secure_code" id="secure_code_{{ c.id }}" placeholder="123456" required>
+                                        </div>
+                                        <button class="button button-small" type="submit">Confirm</button>
+                                    </form>
+                                </details>
+                            </td>
+                        </tr>
+                        {% endif %}
                         {% endfor %}
                     </tbody>
                 </table>
@@ -57,6 +92,34 @@
 
     <div class="side-card card">
         {% if charge %}
+        {% if charge.charge_type == "bif_to_sats" %}
+        <h3>Charge for {{ charge.bif_equivalent }} BIF</h3>
+        <p class="muted">≈ {{ charge.amount_sats }} sats at {{ charge.rate_bif_per_btc }} BIF/BTC</p>
+        {% if checkout_url %}
+        <a class="button" style="width:100%; justify-content:center; margin-top:12px;" href="{{ checkout_url }}" target="_blank" rel="noopener">Open checkout</a>
+        <p class="muted" style="margin-top:6px;">Have the customer open this on their phone to approve the payment.</p>
+        {% endif %}
+        {% if charge.amatopay_session.awaiting_delivery_confirmation %}
+        <div class="detail-section" style="margin-top:16px;">
+            <div class="detail-section-head"><h3>Release the funds</h3></div>
+            <p class="muted">Ask the customer for the six-digit release code AmatoPay sent them, then enter it to release the held funds to us.</p>
+            <form method="post" action="{% url 'webui:pos_confirm_delivery' charge_id=charge.id %}">
+                {% csrf_token %}
+                <div class="form-grid">
+                    <div class="field">
+                        <label for="pos_secure_code">Release code</label>
+                        <input class="text-input" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" name="secure_code" id="pos_secure_code" placeholder="123456" required>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button class="button" type="submit">Confirm delivery</button>
+                </div>
+            </form>
+        </div>
+        {% elif charge.amatopay_session.delivery_confirmed_at %}
+        <div class="notice success" style="margin-top:16px;">Delivery confirmed — AmatoPay is settling the funds to us.</div>
+        {% endif %}
+        {% else %}
         <h3>Charge for {{ charge.amount_sats }} sats</h3>
         <p class="muted">≈ {{ charge.bif_equivalent }} BIF at {{ charge.rate_bif_per_btc }} BIF/BTC</p>
         {% if qr_code %}
@@ -66,6 +129,7 @@
         {% endif %}
         <span class="detail-label">Payment request</span>
         <div class="copy-box">{{ charge.payment_request }}</div>
+        {% endif %}
         <div class="detail-summary-grid" style="margin-top:14px;">
             <div class="detail-summary-chip">
                 <span class="detail-label">Status</span>
@@ -75,7 +139,7 @@
         {% else %}
         <div class="empty-state">
             <h3>No charge yet</h3>
-            <p>Enter an amount to quote a charge and get its invoice QR code.</p>
+            <p>Enter an amount to quote a charge.</p>
         </div>
         {% endif %}
     </div>
@@ -83,11 +147,74 @@
 {% endblock %}
 
 {% block extra_js %}
+<script>
+(function () {
+    var radios = document.querySelectorAll('input[name="charge_type"]');
+    var form = document.getElementById("pos-form");
+    var verifyBtn = document.getElementById("pos-verify-alias-btn");
+    var resultEl = document.getElementById("pos-alias-verify-result");
+    var aliasInput = document.getElementById("payer_alias");
+    var verifyUrl = "{% url 'webui:amatopay_verify_alias' %}";
+    var csrfToken = form.querySelector("[name=csrfmiddlewaretoken]").value;
+    var lastVerifiedAlias = "";
+
+    function isBifMode() {
+        return document.querySelector('input[name="charge_type"]:checked').value === "bif_to_sats";
+    }
+
+    function sync() {
+        var isBif = isBifMode();
+        document.querySelectorAll(".pos-field-sats").forEach(function (el) { el.hidden = isBif; });
+        document.querySelectorAll(".pos-field-bif").forEach(function (el) { el.hidden = !isBif; });
+    }
+    radios.forEach(function (r) { r.addEventListener("change", sync); });
+
+    aliasInput.addEventListener("input", function () { lastVerifiedAlias = ""; resultEl.hidden = true; });
+
+    verifyBtn.addEventListener("click", function () {
+        var alias = aliasInput.value.trim();
+        if (!alias) { aliasInput.focus(); return; }
+
+        verifyBtn.disabled = true;
+        verifyBtn.textContent = "Verifying…";
+
+        fetch(verifyUrl, {
+            method: "POST",
+            headers: { "X-CSRFToken": csrfToken, "Content-Type": "application/x-www-form-urlencoded" },
+            body: "payer_alias=" + encodeURIComponent(alias),
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            resultEl.hidden = false;
+            if (data.ok) {
+                resultEl.innerHTML = '<div class="notice success">Payer: <strong>' + (data.customer_full_name || "Unknown") + '</strong> (' + data.payer_alias + ')</div>';
+                lastVerifiedAlias = alias;
+            } else {
+                resultEl.innerHTML = '<div class="notice error">' + data.error + '</div>';
+                lastVerifiedAlias = "";
+            }
+        }).catch(function () {
+            resultEl.hidden = false;
+            resultEl.innerHTML = '<div class="notice error">Could not reach AmatoPay — try again.</div>';
+            lastVerifiedAlias = "";
+        }).finally(function () {
+            verifyBtn.disabled = false;
+            verifyBtn.textContent = "Verify alias";
+        });
+    });
+
+    form.addEventListener("submit", function (e) {
+        if (isBifMode() && aliasInput.value.trim() !== lastVerifiedAlias) {
+            e.preventDefault();
+            verifyBtn.click();
+        }
+    });
+})();
+</script>
 {% if charge %}
 <script>
 (function () {
     var statusEl = document.getElementById("pos-status");
     if (!statusEl) return;
+    var isBif = "{{ charge.charge_type }}" === "bif_to_sats";
     var url = "{% url 'webui:pos_status' charge_id=charge.id %}";
     var tries = 0;
     var timer = setInterval(function () {
@@ -95,7 +222,10 @@
         if (tries > 120) { clearInterval(timer); return; }
         fetch(url).then(function (r) { return r.json(); }).then(function (data) {
             if (data.status === "paid") {
-                statusEl.innerHTML = '<span class="status-badge status-success">Paid — ' + data.bif_equivalent + ' BIF credited</span>';
+                var label = isBif
+                    ? ('Paid — ' + data.amount_sats + ' sats credited')
+                    : ('Paid — ' + data.bif_equivalent + ' BIF credited');
+                statusEl.innerHTML = '<span class="status-badge status-success">' + label + '</span>';
                 clearInterval(timer);
             } else if (data.status === "expired") {
                 statusEl.innerHTML = '<span class="status-badge status-danger">Expired</span>';

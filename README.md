@@ -1,4 +1,4 @@
-# BTC Wallet Backend
+# Kiri Wallet Backend
 
 Django + Django REST Framework backend for a Bitcoin/Lightning wallet, with
 a BIF (Burundian Franc) exchange and point-of-sale layer on top, and a BIF
@@ -71,6 +71,7 @@ celery -A config beat -l info    # if scheduling poll_blink_invoice_update perio
 | `BLINK_API_KEY` | Blink custodial Lightning wallet API key ([dashboard.blink.sv](https://dashboard.blink.sv)). Required for all Lightning deposit/withdraw/POS features. |
 | `LND_REST_URL`, `LND_MACAROON`, `LND_CERT_PATH` | Optional direct LND node access (`wallet/lnd_service.py`), not required for the Blink-based flows. |
 | `AMATOPAY_API_KEY`, `AMATOPAY_BASE_URL` | AmatoPay merchant secret key (`sk_...`) and base URL, for BIF top-ups. |
+| `AMATOPAY_WEBHOOK_SECRET` | AmatoPay webhook signing secret (`whsec_...`), shown once when you add `https://<this-host>/webhooks/amatopay/` under Merchant Dashboard → Developers. Verifies the `AmatoPay-Signature` header on incoming `payment.paid` / `payment.failed` / `settlement.completed` deliveries. |
 | `BITCOIN_NETWORK` | `testnet4` (default), `testnet` (testnet3, largely dead in practice), or `mainnet` — which chain the platform's HD wallet and every derived address belong to. testnet3 and testnet4 share the *same address format* but are separate chains with separate transaction histories — see the on-chain section below. |
 | `WALLET_ENCRYPTION_KEY` | Fernet key encrypting the platform's BIP32 root xprv at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Back this up along with the database** — losing it loses every on-chain address's funds. |
 | `REDIS_URL` | Celery broker, only needed if you run the polling fallback task. |

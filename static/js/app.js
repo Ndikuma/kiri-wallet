@@ -1,5 +1,5 @@
 /* ==========================================================================
-   BTC Wallet — console shell behaviour
+   Kiri Wallet — console shell behaviour
    Sidebar collapse / mobile drawer, theme toggle, toast auto-dismiss,
    nav-group memory.
    ========================================================================== */

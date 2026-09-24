@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f7931a">
-    <title>{% block title %}BTC Wallet{% endblock %}</title>
+    <title>{% block title %}Kiri Wallet{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -20,7 +20,7 @@
                 <div class="brand-card">
                     <div class="brand-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</div>
                     <div class="brand-copy">
-                        <strong>BTC Wallet</strong>
+                        <strong>Kiri Wallet</strong>
                         <span>Lightning · BIF</span>
                     </div>
                 </div>
@@ -68,7 +68,7 @@
                 </a>
                 <a class="nav-item {% if request.resolver_match.url_name == 'topup' %}active{% endif %}" href="{% url 'webui:topup' %}">
                     <span class="icon-pill">{% include "partials/sidebar_icon.html" with icon_name="topup" %}</span>
-                    <span class="nav-text">Top up (AmatoPay)</span>
+                    <span class="nav-text">Top up (mobile money)</span>
                 </a>
             </nav>
 

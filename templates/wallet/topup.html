@@ -5,9 +5,9 @@
 {% block content %}
 <section class="page-head">
     <div>
-        <span class="eyebrow">AmatoPay</span>
+        <span class="eyebrow">Mobile money</span>
         <h1>Top up your BIF balance</h1>
-        <p>Pay from your mobile money alias through AmatoPay's hosted checkout; your BIF balance is credited once it's collected.</p>
+        <p>Pay from your mobile money alias through our hosted checkout; your BIF balance is credited once it's collected.</p>
     </div>
 </section>
 
@@ -16,7 +16,7 @@
         <div class="form-section-head">
             <h2>New top-up</h2>
         </div>
-        <form method="post">
+        <form method="post" id="topup-form">
             {% csrf_token %}
             <div class="form-grid">
                 <div class="field">
@@ -28,8 +28,10 @@
                     <input class="text-input" type="text" name="payer_alias" id="payer_alias" placeholder="+25779000000" required>
                 </div>
             </div>
+            <div id="alias-verify-result" hidden style="margin: 10px 0;"></div>
             <div class="form-actions">
-                <button class="button" type="submit">Start top-up</button>
+                <button class="button button-light" type="button" id="verify-alias-btn">Verify alias</button>
+                <button class="button" type="submit" id="topup-confirm-btn" disabled>Confirm &amp; start top-up</button>
             </div>
         </form>
 
@@ -58,16 +60,38 @@
     <div class="side-card card">
         {% if session %}
         <h3>Top-up for {{ session.amount_bif }} BIF</h3>
-        <p class="muted">Payer: {{ session.payer_alias }}</p>
-        {% if session.checkout_url %}
+        <p class="muted">Payer: {{ session.payer_display_name|default:session.payer_alias }}{% if session.payer_display_name %} ({{ session.payer_alias }}){% endif %}</p>
+        {% if session.checkout_url and session.status == "pending" %}
         <a class="button" style="width:100%; justify-content:center; margin-top:12px;" href="{{ session.checkout_url }}" target="_blank" rel="noopener">Open checkout</a>
         {% endif %}
         <div class="detail-summary-grid" style="margin-top:14px;">
             <div class="detail-summary-chip">
                 <span class="detail-label">Status</span>
-                <strong id="topup-status"><span class="status-badge status-warning">Pending</span></strong>
+                <strong id="topup-status">
+                    <span class="status-badge {% if session.status == 'confirmed' %}status-success{% elif session.status == 'failed' or session.status == 'expired' %}status-danger{% else %}status-warning{% endif %}">{{ session.get_status_display }}</span>
+                </strong>
             </div>
         </div>
+        {% if session.awaiting_delivery_confirmation %}
+        <div class="detail-section" style="margin-top:16px;">
+            <div class="detail-section-head"><h3>Release the funds</h3></div>
+            <p class="muted">AmatoPay sent a six-digit release code to {{ session.payer_alias }}. Enter it to release the held funds to us.</p>
+            <form method="post" action="{% url 'webui:topup_confirm_delivery' session_id=session.session_id %}">
+                {% csrf_token %}
+                <div class="form-grid">
+                    <div class="field">
+                        <label for="secure_code">Release code</label>
+                        <input class="text-input" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" name="secure_code" id="secure_code" placeholder="123456" required>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button class="button" type="submit">Confirm delivery</button>
+                </div>
+            </form>
+        </div>
+        {% elif session.delivery_confirmed_at %}
+        <div class="notice success" style="margin-top:16px;">Delivery confirmed — AmatoPay is settling the funds to us.</div>
+        {% endif %}
         {% else %}
         <div class="empty-state">
             <h3>No top-up yet</h3>
@@ -79,7 +103,65 @@
 {% endblock %}
 
 {% block extra_js %}
-{% if session %}
+<script>
+(function () {
+    var form = document.getElementById("topup-form");
+    if (!form) return;
+    var verifyBtn = document.getElementById("verify-alias-btn");
+    var confirmBtn = document.getElementById("topup-confirm-btn");
+    var resultEl = document.getElementById("alias-verify-result");
+    var aliasInput = document.getElementById("payer_alias");
+    var verifyUrl = "{% url 'webui:amatopay_verify_alias' %}";
+    var csrfToken = form.querySelector("[name=csrfmiddlewaretoken]").value;
+    var lastVerifiedAlias = "";
+
+    function resetVerification() {
+        confirmBtn.disabled = true;
+        resultEl.hidden = true;
+        lastVerifiedAlias = "";
+    }
+
+    aliasInput.addEventListener("input", resetVerification);
+
+    verifyBtn.addEventListener("click", function () {
+        var alias = aliasInput.value.trim();
+        if (!alias) { aliasInput.focus(); return; }
+
+        verifyBtn.disabled = true;
+        verifyBtn.textContent = "Verifying…";
+
+        fetch(verifyUrl, {
+            method: "POST",
+            headers: { "X-CSRFToken": csrfToken, "Content-Type": "application/x-www-form-urlencoded" },
+            body: "payer_alias=" + encodeURIComponent(alias),
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            resultEl.hidden = false;
+            if (data.ok) {
+                resultEl.innerHTML = '<div class="notice success">Payer: <strong>' + (data.customer_full_name || "Unknown") + '</strong> (' + data.payer_alias + ')</div>';
+                confirmBtn.disabled = false;
+                lastVerifiedAlias = alias;
+            } else {
+                resultEl.innerHTML = '<div class="notice error">' + data.error + '</div>';
+                confirmBtn.disabled = true;
+            }
+        }).catch(function () {
+            resultEl.hidden = false;
+            resultEl.innerHTML = '<div class="notice error">Could not reach AmatoPay — try again.</div>';
+        }).finally(function () {
+            verifyBtn.disabled = false;
+            verifyBtn.textContent = "Verify alias";
+        });
+    });
+
+    form.addEventListener("submit", function (e) {
+        if (aliasInput.value.trim() !== lastVerifiedAlias) {
+            e.preventDefault();
+            verifyBtn.click();
+        }
+    });
+})();
+</script>
+{% if session and session.status == "pending" %}
 <script>
 (function () {
     var statusEl = document.getElementById("topup-status");

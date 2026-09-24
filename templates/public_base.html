@@ -5,8 +5,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f7931a">
-  <title>{% block title %}BTC Wallet{% endblock %}</title>
-  <meta name="description" content="{% block meta_description %}A custodial Bitcoin, Lightning, and BIF wallet — deposits, withdrawals, exchange, POS charges, and AmatoPay top-ups.{% endblock %}">
+  <title>{% block title %}Kiri Wallet{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}A custodial Bitcoin, Lightning, and BIF wallet — deposits, withdrawals, exchange, and POS charges.{% endblock %}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -19,7 +19,7 @@
   <header class="site-header">
     <div class="site-header-inner">
       <a class="site-brand" href="{% url 'webui:landing' %}">
-        <span class="site-brand-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span> BTC Wallet
+        <span class="site-brand-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span> Kiri Wallet
       </a>
       <nav class="site-nav">
         <a href="#features">Features</a>
@@ -48,7 +48,7 @@
   <footer class="site-footer">
     <div class="site-footer-inner">
       <div>
-        <strong><span class="site-brand-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span> BTC Wallet</strong>
+        <strong><span class="site-brand-mark">{% include "partials/sidebar_icon.html" with icon_name="bitcoin" %}</span> Kiri Wallet</strong>
         <p>Bitcoin, Lightning, and BIF in one custodial wallet.</p>
       </div>
       <nav>
@@ -57,7 +57,7 @@
         <a href="{% url 'webui:login' %}">Sign in</a>
       </nav>
     </div>
-    <div class="site-footer-base">© {% now "Y" %} BTC Wallet.</div>
+    <div class="site-footer-base">© {% now "Y" %} Kiri Wallet.</div>
   </footer>
 
   <script src="{% static 'js/app.js' %}" defer></script>

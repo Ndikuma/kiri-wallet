@@ -9,7 +9,12 @@ Auth: `Authorization: Bearer sk_...` (merchant secret key).
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import time
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -18,6 +23,45 @@ from wallet.options import SETTINGS
 
 class AmatoPayError(Exception):
     """Raised for AmatoPay API/network errors."""
+
+
+def _error_message(status_code: int, text: str) -> str:
+    """Pull a human-readable reason out of AmatoPay's DRF-shaped error body
+    (`{"detail": "..."}` or `{"field": ["msg"]}`), falling back to raw text."""
+    try:
+        body = json.loads(text)
+    except ValueError:
+        return text[:500] or f"HTTP {status_code}"
+
+    if isinstance(body, dict):
+        if "detail" in body:
+            return str(body["detail"])
+        for value in body.values():
+            if isinstance(value, list) and value:
+                return str(value[0])
+            if isinstance(value, str):
+                return value
+    return text[:500]
+
+
+def verify_amatopay_signature(secret: str, signature_header: str, raw_body: bytes, tolerance: int = 300) -> bool:
+    """Verify a webhook delivery's `AmatoPay-Signature: t=<ts>,v1=<hmac>` header.
+
+    HMAC-SHA256 over `<timestamp>.<raw_body>` using the endpoint's webhook secret,
+    compared in constant time; stale timestamps (beyond `tolerance` seconds) are rejected.
+    """
+    if not secret or not signature_header:
+        return False
+    try:
+        parts = dict(p.split("=", 1) for p in signature_header.split(","))
+        ts, v1 = parts["t"], parts["v1"]
+        if abs(time.time() - int(ts)) > tolerance:
+            return False
+    except (KeyError, ValueError):
+        return False
+
+    expected = hmac.new(secret.encode(), f"{ts}.".encode() + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, v1)
 
 
 class AmatoPayClient:
@@ -40,10 +84,16 @@ class AmatoPayClient:
             raise AmatoPayError(f"AmatoPay request failed: {exc}") from exc
 
         if response.status_code >= 400:
-            raise AmatoPayError(f"AmatoPay {method} {path} returned {response.status_code}: {response.text[:500]}")
+            raise AmatoPayError(_error_message(response.status_code, response.text))
         if not response.content:
             return {}
         return response.json()
+
+    def verify_alias(self, payer_alias: str) -> dict[str, Any]:
+        """GET /api/v1/checkout/alias-verifications/ — confirm a MOBILE alias is active
+        and payable, and resolve its registered display name. Raises AmatoPayError
+        (400) if the alias isn't payable — the message carries a human-readable reason."""
+        return self._request("GET", f"/api/v1/checkout/alias-verifications/?payer_alias={quote(payer_alias)}")
 
     def create_checkout_session(
         self,
@@ -77,3 +127,14 @@ class AmatoPayClient:
     def get_checkout_status(self, session_id: str) -> dict[str, Any]:
         """GET /api/v1/checkout/sessions/{id}/status/ — lightweight status-only poll."""
         return self._request("GET", f"/api/v1/checkout/sessions/{session_id}/status/")
+
+    def confirm_delivery(self, payment_reference: str, secure_code: str) -> dict[str, Any]:
+        """POST /api/v1/payments/{reference}/confirm-delivery/ — release AmatoPay's
+        held funds to our settlement account. `secure_code` is the payer's six-digit
+        release code (shown only to the payer, never to the merchant API); only valid
+        once AmatoPay has moved the payment to `delivery_pending`. Raises AmatoPayError
+        on a wrong code, a wrong-status payment, or after 5 failed attempts (locked)."""
+        return self._request(
+            "POST", f"/api/v1/payments/{quote(payment_reference)}/confirm-delivery/",
+            json={"secure_code": secure_code},
+        )

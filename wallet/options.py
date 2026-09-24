@@ -39,6 +39,7 @@ class Options(BlinkWalletOptions):
 
     AMATOPAY_API_KEY = env("AMATOPAY_API_KEY", default="")
     AMATOPAY_BASE_URL = env("AMATOPAY_BASE_URL", default="http://localhost:8000")
+    AMATOPAY_WEBHOOK_SECRET = env("AMATOPAY_WEBHOOK_SECRET", default="")
 
     @property
     def has_blink(self) -> bool:

@@ -1,5 +1,5 @@
 """
-Django settings for config project (BTC Wallet backend).
+Django settings for config project (Kiri Wallet backend).
 """
 
 from datetime import timedelta
@@ -155,8 +155,9 @@ LND_REST_URL = os.getenv("LND_REST_URL", "")
 LND_MACAROON = os.getenv("LND_MACAROON", "")
 LND_CERT_PATH = os.getenv("LND_CERT_PATH", str(BASE_DIR / "tls.cert"))
 
-AMATOPAY_API_KEY = os.getenv("AMATOPAY_API_KEY", "")
-AMATOPAY_BASE_URL = os.getenv("AMATOPAY_BASE_URL", "http://localhost:8000")
+AMATOPAY_API_KEY = os.getenv("AMATOPAY_API_KEY", "sk_YBjbZ3rLNXLNRmHZB1dpQ03mLFFFFktpqLH62z4XyI8")
+AMATOPAY_BASE_URL = os.getenv("AMATOPAY_BASE_URL", "http://localhost:8001")
+AMATOPAY_WEBHOOK_SECRET = os.getenv("AMATOPAY_WEBHOOK_SECRET", "")
 
 # On-chain Bitcoin (btclib). Defaults to testnet4 on purpose, so switching to
 # real funds ("mainnet") is a deliberate .env change, not an accident.
@@ -191,8 +192,8 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 # ── Django admin (Unfold) ───────────────────────────────────
 
 UNFOLD = {
-    "SITE_TITLE": "BTC Wallet Admin",
-    "SITE_HEADER": "BTC Wallet",
+    "SITE_TITLE": "Kiri Wallet Admin",
+    "SITE_HEADER": "Kiri Wallet",
     "SITE_SUBHEADER": "Bitcoin, Lightning & BIF operations",
     "SITE_SYMBOL": "currency_bitcoin",
     "SITE_URL": "/",

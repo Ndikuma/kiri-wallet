@@ -21,7 +21,7 @@
         <span class="btc-provider-dot"></span> Lightning: {% if provider_status.lightning.healthy %}Live{% else %}Setup{% endif %}
       </a>
       <a class="btc-provider-chip {% if provider_status.amatopay.healthy %}is-live{% endif %}" href="{{ provider_status.amatopay.url }}">
-        <span class="btc-provider-dot"></span> AmatoPay: {% if provider_status.amatopay.healthy %}Live{% else %}Setup{% endif %}
+        <span class="btc-provider-dot"></span> Mobile money: {% if provider_status.amatopay.healthy %}Live{% else %}Setup{% endif %}
       </a>
       <span class="btc-provider-chip is-live">
         <span class="btc-provider-dot"></span> Network: {{ provider_status.network|capfirst }}

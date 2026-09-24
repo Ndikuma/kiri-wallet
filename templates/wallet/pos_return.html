@@ -1,0 +1,31 @@
+{% extends "public_base.html" %}
+
+{% block title %}Payment status{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div>
+        <span class="eyebrow">Mobile money</span>
+        <h1>Payment status</h1>
+        {% if session %}
+        <p>Your payment of {{ session.amount_bif }} BIF to the merchant.</p>
+        {% else %}
+        <p>We couldn't find that payment.</p>
+        {% endif %}
+    </div>
+</section>
+
+<div class="card form-card" style="max-width:480px; margin:0 auto;">
+    {% if session %}
+        {% if session.status == "confirmed" %}
+            <div class="notice success">Payment received — thank you.</div>
+        {% elif session.status == "failed" or session.status == "expired" %}
+            <div class="notice error">This payment {{ session.get_status_display|lower }}. Please ask the merchant to start a new charge.</div>
+        {% else %}
+            <div class="notice">Still processing — this page will update once the merchant's dashboard shows it collected.</div>
+        {% endif %}
+    {% else %}
+        <div class="notice error">No matching payment was found for this link.</div>
+    {% endif %}
+</div>
+{% endblock %}

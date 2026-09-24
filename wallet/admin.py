@@ -1,9 +1,12 @@
 from django.contrib import admin
+from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 from unfold.decorators import display
 
+from .esplora_client import explorer_web_base
 from .models import (
     AmatoPayCheckoutSession,
+    AmatoPayWebhookEvent,
     BitcoinHDWallet,
     ExchangeRate,
     PlatformBitcoinAddress,
@@ -24,17 +27,39 @@ _POS_CHARGE_STATUS_LABELS = {"pending": "warning", "paid": "success", "expired":
 _TOPUP_STATUS_LABELS = {"pending": "warning", "confirmed": "success", "failed": "danger", "expired": "danger"}
 
 
+def _explorer_link(kind: str, value: str) -> str:
+    """Renders `value` (a txid or address) as a link to a block explorer page for the
+    configured BITCOIN_NETWORK, or as plain text if no public explorer is configured
+    for it (e.g. regtest) or there's nothing to link."""
+    if not value:
+        return "—"
+    base = explorer_web_base()
+    if not base:
+        return value
+    return format_html('<a href="{}/{}/{}" target="_blank" rel="noopener noreferrer">{}</a>', base, kind, value, value)
+
+
 @admin.register(Wallet)
 class WalletAdmin(ModelAdmin):
-    list_display = ["user", "available_balance", "pending_balance", "bif_balance", "is_platform", "updated_at"]
+    list_display = [
+        "user", "available_balance", "pending_balance", "bif_balance", "display_bitcoin_address",
+        "is_platform", "updated_at",
+    ]
     list_filter = ["is_platform"]
     search_fields = ["user__username", "user__email", "bitcoin_address"]
     readonly_fields = ["id", "created_at", "updated_at"]
 
+    @display(description="Bitcoin Address")
+    def display_bitcoin_address(self, obj):
+        return _explorer_link("address", obj.bitcoin_address)
+
 
 @admin.register(WalletTransaction)
 class WalletTransactionAdmin(ModelAdmin):
-    list_display = ["id", "wallet", "display_type", "currency", "amount", "display_status", "created_at"]
+    list_display = [
+        "id", "wallet", "display_type", "currency", "amount", "display_status", "display_onchain_txid",
+        "created_at",
+    ]
     list_filter = ["type", "currency", "status"]
     search_fields = ["id", "lnd_payment_hash", "onchain_txid", "wallet__user__username"]
     readonly_fields = ["id", "created_at"]
@@ -47,6 +72,10 @@ class WalletTransactionAdmin(ModelAdmin):
     @display(description="Status", label=_TRANSACTION_STATUS_LABELS, ordering="status")
     def display_status(self, obj):
         return obj.status
+
+    @display(description="On-chain TXID", ordering="onchain_txid")
+    def display_onchain_txid(self, obj):
+        return _explorer_link("tx", obj.onchain_txid)
 
 
 @admin.register(WithdrawalFeePolicy)
@@ -64,11 +93,15 @@ class ExchangeRateAdmin(ModelAdmin):
 
 @admin.register(POSCharge)
 class POSChargeAdmin(ModelAdmin):
-    list_display = ["id", "wallet", "amount_sats", "bif_equivalent", "display_status", "created_at"]
-    list_filter = ["status"]
-    search_fields = ["id", "payment_hash", "wallet__user__username"]
+    list_display = ["id", "wallet", "display_charge_type", "amount_sats", "bif_equivalent", "display_status", "created_at"]
+    list_filter = ["status", "charge_type"]
+    search_fields = ["id", "payment_hash", "payer_alias", "wallet__user__username"]
     readonly_fields = ["id", "created_at"]
     date_hierarchy = "created_at"
+
+    @display(description="Type", ordering="charge_type")
+    def display_charge_type(self, obj):
+        return obj.get_charge_type_display()
 
     @display(description="Status", label=_POS_CHARGE_STATUS_LABELS, ordering="status")
     def display_status(self, obj):
@@ -77,15 +110,38 @@ class POSChargeAdmin(ModelAdmin):
 
 @admin.register(AmatoPayCheckoutSession)
 class AmatoPayCheckoutSessionAdmin(ModelAdmin):
-    list_display = ["session_id", "wallet", "payer_alias", "amount_bif", "display_status", "created_at"]
+    list_display = [
+        "session_id", "wallet", "payer_alias", "amount_bif", "display_status",
+        "payment_status", "display_delivery", "created_at",
+    ]
     list_filter = ["status"]
-    search_fields = ["session_id", "payer_alias", "wallet__user__username"]
+    search_fields = ["session_id", "payment_reference", "order_number", "payer_alias", "wallet__user__username"]
     readonly_fields = ["id", "created_at"]
     date_hierarchy = "created_at"
 
     @display(description="Status", label=_TOPUP_STATUS_LABELS, ordering="status")
     def display_status(self, obj):
         return obj.status
+
+    @display(description="Delivery", boolean=True)
+    def display_delivery(self, obj):
+        return bool(obj.delivery_confirmed_at)
+
+
+@admin.register(AmatoPayWebhookEvent)
+class AmatoPayWebhookEventAdmin(ModelAdmin):
+    list_display = ["id", "event_type", "payment_reference", "processed", "received_at"]
+    list_filter = ["event_type"]
+    search_fields = ["id", "payment_reference"]
+    readonly_fields = ["id", "event_type", "payment_reference", "payload", "received_at", "processed_at", "error"]
+    date_hierarchy = "received_at"
+
+    @display(description="Processed", boolean=True)
+    def processed(self, obj):
+        return bool(obj.processed_at) and not obj.error
+
+    def has_add_permission(self, request):
+        return False
 
 
 @admin.register(BitcoinHDWallet)
@@ -105,9 +161,13 @@ class BitcoinHDWalletAdmin(ModelAdmin):
 
 @admin.register(PlatformBitcoinAddress)
 class PlatformBitcoinAddressAdmin(ModelAdmin):
-    list_display = ["address", "derivation_index", "label", "created_at"]
+    list_display = ["display_address", "derivation_index", "label", "created_at"]
     search_fields = ["address", "label"]
     readonly_fields = ["id", "address", "derivation_index", "label", "created_at"]
 
     def has_add_permission(self, request):
         return False
+
+    @display(description="Address", ordering="address")
+    def display_address(self, obj):
+        return _explorer_link("address", obj.address)

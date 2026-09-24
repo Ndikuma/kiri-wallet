@@ -4,14 +4,25 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from wallet import bif
 from wallet.amatopay_client import AmatoPayError
-from wallet.amatopay_topup import check_topup_session, create_topup_session
+from wallet.amatopay_topup import check_topup_session, confirm_delivery, create_topup_session, verify_payer_alias
 from wallet.bitcoin import CustodialBitcoinService
 from wallet.blink_wallet import BlinkWallet, BlinkWalletError
-from wallet.models import AmatoPayCheckoutSession, ExchangeRate, POSCharge, TransactionStatus, TransactionType, Wallet
+from wallet.models import (
+    AmatoPayCheckoutSession,
+    AmatoPayCheckoutSessionStatus,
+    ExchangeRate,
+    POSCharge,
+    POSChargeStatus,
+    POSChargeType,
+    TransactionStatus,
+    TransactionType,
+    Wallet,
+)
 from wallet.withdrawal import process_withdrawal
 from webui.forms import LoginForm, RegisterForm
 
@@ -208,14 +219,35 @@ def exchange_view(request):
         except ValueError as exc:
             messages.error(request, str(exc))
         else:
-            messages.success(
-                request,
-                f"Converted {result['amount_sats']} sats and {result['amount_bif']} BIF at "
-                f"{result['rate_bif_per_btc']} BIF/BTC.",
-            )
+            messages.success(request, f"Converted {result['amount_sats']} sats and {result['amount_bif']} BIF at {result['rate_bif_per_btc']} BIF/BTC.")
             wallet.refresh_from_db()
 
     return render(request, "wallet/exchange.html", {"wallet": wallet, "rate": rate})
+
+
+# ── AmatoPay alias verification (shared: POS BIF charge + top-up) ─────
+
+@login_required
+@require_POST
+def amatopay_verify_alias_json(request):
+    """Step 1 of the checkout flow, called by JS before the form's real submit: look
+    up the payer's mobile alias and show its resolved name for confirmation, so the
+    checkout session (step 2) is only created once the operator has actually confirmed
+    who they're about to charge."""
+    payer_alias = request.POST.get("payer_alias", "").strip()
+    if not payer_alias:
+        return JsonResponse({"ok": False, "error": "Enter a mobile alias."}, status=400)
+    try:
+        result = verify_payer_alias(payer_alias)
+    except AmatoPayError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    return JsonResponse({
+        "ok": True,
+        "payer_alias": result.get("payer_alias", payer_alias),
+        "customer_full_name": result.get("customer_full_name", ""),
+        "status": result.get("status", ""),
+        "currency": result.get("currency", ""),
+    })
 
 
 # ── POS charge ───────────────────────────────────────────────
@@ -225,31 +257,88 @@ def pos_view(request):
     wallet = _wallet(request.user)
     charge = None
     qr_code = ""
+    checkout_url = ""
+    charge_type = request.POST.get("charge_type", POSChargeType.SATS_TO_BIF)
 
     if request.method == "POST":
-        try:
-            amount = int(request.POST.get("amount_sats", "0"))
-        except ValueError:
-            amount = 0
         memo = request.POST.get("memo", "")[:255]
 
         try:
-            charge, invoice = bif.create_pos_charge(wallet, amount_sats=amount, memo=memo)
-        except (ValueError, BlinkWalletError) as exc:
+            if charge_type == POSChargeType.BIF_TO_SATS:
+                amount_bif_raw = request.POST.get("amount_bif", "").strip()
+                amount_bif = int(amount_bif_raw) if amount_bif_raw.isdigit() else 0
+                payer_alias = request.POST.get("payer_alias", "").strip()
+                return_url = request.build_absolute_uri(reverse("webui:pos_return"))
+                charge, session = bif.create_pos_charge_bif_to_sats(
+                    wallet, amount_bif=amount_bif, payer_alias=payer_alias, memo=memo, return_url=return_url,
+                )
+                checkout_url = session.checkout_url
+            else:
+                amount_sats_raw = request.POST.get("amount_sats", "").strip()
+                amount_sats = int(amount_sats_raw) if amount_sats_raw.isdigit() else 0
+                charge, invoice = bif.create_pos_charge(wallet, amount_sats=amount_sats, memo=memo)
+                qr_code = invoice.get("qrCode", "")
+        except (ValueError, BlinkWalletError, AmatoPayError) as exc:
             messages.error(request, str(exc))
-        else:
-            qr_code = invoice.get("qrCode", "")
 
     recent_charges = wallet.pos_charges.all().order_by("-created_at")[:8]
     return render(request, "wallet/pos.html", {
-        "wallet": wallet, "charge": charge, "qr_code": qr_code, "recent_charges": recent_charges,
+        "wallet": wallet, "charge": charge, "qr_code": qr_code, "checkout_url": checkout_url,
+        "charge_type": charge_type, "recent_charges": recent_charges,
     })
 
 
 @login_required
 def pos_status_json(request, charge_id):
     charge = get_object_or_404(POSCharge, pk=charge_id, wallet=_wallet(request.user))
-    return JsonResponse({"status": charge.status, "bif_equivalent": charge.bif_equivalent})
+    if charge.amatopay_session_id and charge.status == POSChargeStatus.PENDING:
+        try:
+            check_topup_session(charge.amatopay_session)
+            charge.refresh_from_db()
+        except AmatoPayError:
+            pass
+    return JsonResponse({
+        "status": charge.status, "charge_type": charge.charge_type,
+        "amount_sats": charge.amount_sats, "bif_equivalent": charge.bif_equivalent,
+    })
+
+
+def pos_return_view(request):
+    """Public landing page AmatoPay redirects a *payer's* browser to after a BIF_TO_SATS
+    POS checkout (the payer is a customer paying via mobile money, not a logged-in
+    account holder). AmatoPay appends `?payment_reference=...` — we reconcile against
+    AmatoPay's authoritative status rather than trusting the redirect itself."""
+    payment_reference = request.GET.get("payment_reference", "")
+    session = AmatoPayCheckoutSession.objects.filter(payment_reference=payment_reference).first() if payment_reference else None
+
+    if session:
+        try:
+            session = check_topup_session(session)
+        except AmatoPayError:
+            pass
+
+    return render(request, "wallet/pos_return.html", {"session": session})
+
+
+@login_required
+@require_POST
+def pos_confirm_delivery_view(request, charge_id):
+    """The merchant asks the customer for the six-digit release code AmatoPay sent to
+    their phone and enters it here, so AmatoPay releases the held funds to us."""
+    charge = get_object_or_404(POSCharge, pk=charge_id, wallet=_wallet(request.user))
+    secure_code = request.POST.get("secure_code", "").strip()
+
+    if not charge.amatopay_session_id:
+        messages.error(request, "This charge has no AmatoPay payment to confirm.")
+    else:
+        try:
+            confirm_delivery(charge.amatopay_session, secure_code)
+        except AmatoPayError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Release code accepted — AmatoPay is settling the funds to us.")
+
+    return redirect("webui:pos")
 
 
 # ── AmatoPay BIF top-up ──────────────────────────────────────
@@ -267,12 +356,69 @@ def topup_view(request):
         payer_alias = request.POST.get("payer_alias", "").strip()
 
         try:
-            session = create_topup_session(wallet, amount_bif=amount_bif, payer_alias=payer_alias)
+            return_url = request.build_absolute_uri(reverse("webui:topup_return"))
+            session = create_topup_session(wallet, amount_bif=amount_bif, payer_alias=payer_alias, return_url=return_url)
         except (ValueError, AmatoPayError) as exc:
             messages.error(request, str(exc))
+        else:
+            # Step 3: hand the payer's browser to AmatoPay's hosted checkout page.
+            return redirect(session.checkout_url)
+    else:
+        session_id = request.GET.get("session", "")
+        if session_id:
+            session = AmatoPayCheckoutSession.objects.filter(session_id=session_id, wallet=wallet).first()
 
     recent_sessions = wallet.amatopay_sessions.all().order_by("-created_at")[:8]
     return render(request, "wallet/topup.html", {"wallet": wallet, "session": session, "recent_sessions": recent_sessions})
+
+
+@login_required
+def topup_return_view(request):
+    """AmatoPay redirects the payer's browser back here (`return_url`) with
+    `?payment_reference=...` once the checkout reaches a terminal outcome. This is UX
+    only — we re-query AmatoPay for the authoritative status before crediting anything."""
+    wallet = _wallet(request.user)
+    payment_reference = request.GET.get("payment_reference", "")
+    session = AmatoPayCheckoutSession.objects.filter(wallet=wallet, payment_reference=payment_reference).first() if payment_reference else None
+
+    if not session:
+        messages.warning(request, "We couldn't find that top-up session.")
+        return redirect("webui:topup")
+
+    try:
+        session = check_topup_session(session)
+    except AmatoPayError:
+        pass
+
+    if session.status == AmatoPayCheckoutSessionStatus.CONFIRMED:
+        if session.awaiting_delivery_confirmation:
+            messages.success(request, f"Top-up of {session.amount_bif} BIF confirmed — enter the release code AmatoPay sent you below to finish releasing the funds to us.")
+        else:
+            messages.success(request, f"Top-up of {session.amount_bif} BIF confirmed.")
+    elif session.status == AmatoPayCheckoutSessionStatus.FAILED:
+        messages.error(request, "The top-up payment failed or was cancelled.")
+    else:
+        messages.info(request, "Your top-up is still processing — we'll confirm it as soon as AmatoPay reports it collected.")
+
+    return redirect(f"{reverse('webui:topup')}?session={session.session_id}")
+
+
+@login_required
+@require_POST
+def topup_confirm_delivery_view(request, session_id):
+    """You (the payer) read AmatoPay's six-digit release code off your own phone and
+    enter it here so AmatoPay releases the held funds to our settlement account."""
+    session = get_object_or_404(AmatoPayCheckoutSession, session_id=session_id, wallet=_wallet(request.user))
+    secure_code = request.POST.get("secure_code", "").strip()
+
+    try:
+        confirm_delivery(session, secure_code)
+    except AmatoPayError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Release code accepted — AmatoPay is settling the funds to us.")
+
+    return redirect(f"{reverse('webui:topup')}?session={session.session_id}")
 
 
 @login_required

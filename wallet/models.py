@@ -13,6 +13,7 @@ class TransactionType(models.TextChoices):
     WITHDRAWAL = "withdrawal", "Withdrawal"
     FEE = "fee", "Platform Fee"
     EXCHANGE_SATS_TO_BIF = "exchange_sats_to_bif", "Exchange: SATS to BIF"
+    EXCHANGE_BIF_TO_SATS = "exchange_bif_to_sats", "Exchange: BIF to SATS"
     BIF_TOPUP = "bif_topup", "BIF Top-up (AmatoPay)"
     POS_SETTLEMENT = "pos_settlement", "POS Settlement (BIF)"
 
@@ -323,7 +324,13 @@ class AmatoPayCheckoutSession(models.Model):
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="amatopay_sessions")
 
     session_id = models.CharField(max_length=64, unique=True, help_text="AmatoPay session_id (UUID).")
+    order_number = models.CharField(max_length=64, blank=True, default="", help_text="Our order_number sent to AmatoPay.")
+    payment_reference = models.CharField(
+        max_length=64, blank=True, default="", db_index=True,
+        help_text="AmatoPay payment_reference — correlates the browser return_url and webhooks to this session.",
+    )
     payer_alias = models.CharField(max_length=160)
+    payer_display_name = models.CharField(max_length=160, blank=True, default="", help_text="Resolved from AmatoPay.")
     amount_bif = models.BigIntegerField()
     checkout_url = models.URLField(max_length=500, blank=True, default="")
     status = models.CharField(
@@ -331,16 +338,54 @@ class AmatoPayCheckoutSession(models.Model):
         choices=AmatoPayCheckoutSessionStatus.choices,
         default=AmatoPayCheckoutSessionStatus.PENDING,
     )
+    payment_status = models.CharField(
+        max_length=32, blank=True, default="",
+        help_text="Latest raw AmatoPay Payment.status (paid/funds_held/delivery_pending/settled/...).",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
+    delivery_confirmed_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When the payer's six-digit release code was accepted by AmatoPay, releasing held funds to us.",
+    )
 
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["wallet", "-created_at"])]
 
+    @property
+    def awaiting_delivery_confirmation(self) -> bool:
+        """True once AmatoPay is holding the funds pending our submission of the
+        payer's six-digit release code (`confirm-delivery`)."""
+        return bool(
+            self.payment_reference
+            and not self.delivery_confirmed_at
+            and self.payment_status in {"funds_held", "delivery_pending"}
+        )
+
     def __str__(self):
         return f"AmatoPay session {self.session_id} ({self.amount_bif} BIF, {self.status})"
+
+
+class AmatoPayWebhookEvent(models.Model):
+    """A received AmatoPay webhook delivery, stored durably and keyed on AmatoPay's
+    event `id` so retries/replays are processed at most once (see docs/WEBHOOKS.md)."""
+
+    id = models.CharField(primary_key=True, max_length=64, help_text="AmatoPay event id, e.g. evt_...")
+    event_type = models.CharField(max_length=64, db_index=True)
+    payment_reference = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    payload = models.JSONField(default=dict)
+
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-received_at"]
+
+    def __str__(self):
+        return f"AmatoPay event {self.id} ({self.event_type})"
 
 
 class POSChargeStatus(models.TextChoices):
@@ -349,11 +394,28 @@ class POSChargeStatus(models.TextChoices):
     EXPIRED = "expired", "Expired"
 
 
+class POSChargeType(models.TextChoices):
+    SATS_TO_BIF = "sats_to_bif", "Sats charge, BIF settlement"
+    BIF_TO_SATS = "bif_to_sats", "BIF charge, sats settlement"
+
+
 class POSCharge(models.Model):
-    """A merchant-facing point-of-sale charge: quote a BIF amount, collect it in sats over Lightning."""
+    """A merchant-facing point-of-sale charge, in either direction:
+      - SATS_TO_BIF (default): quote a Lightning invoice for `amount_sats`, settle
+        the BIF equivalent to `bif_balance` once it's paid.
+      - BIF_TO_SATS: quote `bif_equivalent` BIF, collect it via an AmatoPay mobile-money
+        checkout (`amatopay_session`), settle the sats equivalent to `available_balance`
+        once collected.
+    Either way `amount_sats` / `bif_equivalent` / `rate_bif_per_btc` hold the locked-in
+    sats side, BIF side, and rate of the trade.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="pos_charges")
+
+    charge_type = models.CharField(
+        max_length=20, choices=POSChargeType.choices, default=POSChargeType.SATS_TO_BIF, db_index=True,
+    )
 
     amount_sats = models.BigIntegerField()
     bif_equivalent = models.BigIntegerField()
@@ -361,6 +423,10 @@ class POSCharge(models.Model):
 
     payment_hash = models.CharField(max_length=66, blank=True, default="", db_index=True)
     payment_request = models.CharField(max_length=1000, blank=True, default="")
+    payer_alias = models.CharField(max_length=160, blank=True, default="", help_text="Mobile money alias (BIF_TO_SATS only).")
+    amatopay_session = models.OneToOneField(
+        "AmatoPayCheckoutSession", null=True, blank=True, on_delete=models.SET_NULL, related_name="pos_charge",
+    )
     memo = models.CharField(max_length=255, blank=True, default="")
 
     status = models.CharField(max_length=20, choices=POSChargeStatus.choices, default=POSChargeStatus.PENDING)
@@ -373,6 +439,8 @@ class POSCharge(models.Model):
         indexes = [models.Index(fields=["wallet", "-created_at"]), models.Index(fields=["payment_hash"])]
 
     def __str__(self):
+        if self.charge_type == POSChargeType.BIF_TO_SATS:
+            return f"POS charge {self.bif_equivalent} BIF → {self.amount_sats} sats [{self.status}]"
         return f"POS charge {self.amount_sats} sats → {self.bif_equivalent} BIF [{self.status}]"
 
 

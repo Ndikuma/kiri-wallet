@@ -108,6 +108,24 @@ def _providers() -> list[str]:
     )
 
 
+def explorer_web_base() -> str | None:
+    """Base URL of a human-browsable block explorer *webpage* (not the JSON API) for
+    the configured BITCOIN_NETWORK, for building "view on explorer" links e.g. in the
+    admin. Prefers blockstream.info, same reasoning as `_providers()` above (and same
+    testnet4 exception, since blockstream.info has no explorer pages for it either).
+    Returns None for networks with no public web explorer (e.g. regtest)."""
+    network = getattr(settings, "BITCOIN_NETWORK", "testnet")
+    if network == "mainnet":
+        return "https://blockstream.info"
+    if network == "testnet4":
+        return "https://mempool.space/testnet4"
+    if network == "testnet":
+        return "https://blockstream.info/testnet"
+    if network == "signet":
+        return "https://blockstream.info/signet"
+    return None
+
+
 class EsploraError(Exception):
     pass
 
