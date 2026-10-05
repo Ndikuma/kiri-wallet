@@ -6,7 +6,8 @@ from typing import Any
 
 from django.utils import timezone
 
-from wallet.bitcoin import CustodialBitcoinService
+from wallet.bitcoin import CustodialBitcoinService, parse_bip21, validate_destination
+from wallet.esplora_client import EsploraError
 from wallet.blink_wallet import BlinkWallet, decode_blink_payment_request, is_lightning_address, is_lnurl
 from wallet.models import (
     TransactionStatus,
@@ -83,11 +84,12 @@ def decode_withdrawal_target(value: str) -> WithdrawalTarget:
     if not target:
         raise ValueError("Withdrawal destination is required.")
 
+    uri_amount_sats = None
     lowered = target.lower()
     if lowered.startswith("lightning:"):
         target = target.split(":", 1)[1].strip()
     elif lowered.startswith("bitcoin:"):
-        target = target.split(":", 1)[1].split("?", 1)[0].strip()
+        target, uri_amount_sats = parse_bip21(target)
 
     lowered = target.lower()
     if lowered.startswith(LIGHTNING_INVOICE_PREFIXES):
@@ -108,7 +110,11 @@ def decode_withdrawal_target(value: str) -> WithdrawalTarget:
         return WithdrawalTarget(raw=target, rail="lightning", target_type="lnurl", lnurl=target)
 
     if BITCOIN_ADDRESS_RE.match(target):
-        return WithdrawalTarget(raw=target, rail="bitcoin", target_type="bitcoin_address", bitcoin_address=target)
+        validate_destination(target)  # checksum + network (e.g. a mainnet address on testnet4)
+        return WithdrawalTarget(
+            raw=target, rail="bitcoin", target_type="bitcoin_address", bitcoin_address=target,
+            amount_sats=uri_amount_sats,
+        )
 
     raise ValueError("Enter a valid Lightning invoice, Lightning address, or Bitcoin address.")
 
@@ -116,7 +122,7 @@ def decode_withdrawal_target(value: str) -> WithdrawalTarget:
 def resolve_withdrawal_amount(decoded: WithdrawalTarget, requested_amount: int | None) -> int:
     if decoded.amount_sats is not None:
         if requested_amount and requested_amount != decoded.amount_sats:
-            raise ValueError(f"Amount must match the Lightning invoice amount: {decoded.amount_sats} sats.")
+            raise ValueError(f"Amount must match the payment request amount: {decoded.amount_sats} sats.")
         return decoded.amount_sats
 
     if not requested_amount:
@@ -157,11 +163,23 @@ def estimate_withdrawal_fees(*, wallet: Wallet, destination: str, amount_sats: i
     minimum = int(getattr(SETTINGS, "MIN_WITHDRAWAL", 1000))
     below_minimum = amount < minimum
     quote_data = quote.as_dict()
+    message = f"Minimum withdrawal is {minimum} sats." if below_minimum else ""
+    onchain = {}
+    if decoded.target_type == "bitcoin_address" and not below_minimum:
+        try:
+            onchain = CustodialBitcoinService().quote_withdrawal(decoded.bitcoin_address, amount)
+        except EsploraError as exc:
+            onchain = {"error": f"Bitcoin network unreachable: {exc}"}
+        except ValueError as exc:  # e.g. not enough on-chain liquidity
+            onchain = {"error": str(exc)}
+            message = str(exc)
     return {
         "target": decoded.as_dict(),
         "can_calculate": True,
-        "can_withdraw": wallet.available_balance >= quote.wallet_debit_sats and not below_minimum,
-        "message": f"Minimum withdrawal is {minimum} sats." if below_minimum else "",
+        "can_withdraw": wallet.available_balance >= quote.wallet_debit_sats and not below_minimum
+        and "error" not in onchain,
+        "message": message,
+        "onchain": onchain,
         **quote_data,
         "available_balance": wallet.available_balance,
         "balance_after": wallet.available_balance - quote.wallet_debit_sats,
@@ -222,18 +240,16 @@ def _withdraw_lnurl(wallet, decoded, quote, memo):
 
 
 def _withdraw_bitcoin_address(wallet, decoded, quote, memo):
-    if quote.charge_to_user and quote.fee_sats:
-        wallet.available_balance -= quote.fee_sats
-        wallet.save(update_fields=["available_balance", "updated_at"])
-
-    result = CustodialBitcoinService().withdraw(wallet.user, decoded.bitcoin_address, quote.amount_sats)
-    tx = WalletTransaction.objects.filter(
-        user=wallet.user, wallet=wallet, type=TransactionType.WITHDRAWAL, onchain_txid=result.get("txid", ""),
-    ).order_by("-created_at").first()
-    if tx is None:
-        raise ValueError("Bitcoin withdrawal was submitted, but the local transaction record was not found.")
-    if quote.charge_to_user:
-        _create_fee_transaction(wallet, quote, "Bitcoin withdrawal fee")
+    minimum = int(getattr(SETTINGS, "MIN_WITHDRAWAL", 1000))
+    if quote.amount_sats < minimum:
+        raise ValueError(f"Minimum withdrawal is {minimum} sats.")
+    # Debit (amount + platform fee), fee records, signing, broadcast and refund-on-failure
+    # all happen inside the service, under a row lock on the wallet.
+    tx, result = CustodialBitcoinService().withdraw(
+        wallet, decoded.bitcoin_address, quote.amount_sats,
+        platform_fee=quote.fee_sats if quote.charge_to_user else 0, memo=memo,
+    )
+    wallet.refresh_from_db()
     return tx, {"provider": "bitcoin", "rail": "bitcoin", "target": decoded.as_dict(), "fee": quote.as_dict(), "provider_result": result}
 
 

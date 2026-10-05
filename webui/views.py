@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login as auth_login, logout as auth_logout
 from django.contrib.auth.decorators import login_required
@@ -10,7 +11,7 @@ from django.views.decorators.http import require_POST
 from wallet import bif
 from wallet.amatopay_client import AmatoPayError
 from wallet.amatopay_topup import check_topup_session, confirm_delivery, create_topup_session, verify_payer_alias
-from wallet.bitcoin import CustodialBitcoinService
+from wallet.bitcoin import CustodialBitcoinService, deposit_confirmations_required
 from wallet.blink_wallet import BlinkWallet, BlinkWalletError
 from wallet.models import (
     AmatoPayCheckoutSession,
@@ -171,24 +172,36 @@ def withdraw_view(request):
 @login_required
 def bitcoin_address_view(request):
     wallet = _wallet(request.user)
-    qr_code = ""
+
+    service = CustodialBitcoinService()
+    address_info = None
 
     if request.method == "POST":
         try:
-            data = CustodialBitcoinService().get_or_create_user_address(wallet)
+            if request.POST.get("action") == "new" and wallet.bitcoin_address:
+                address_info = service.new_user_address(wallet)
+                messages.success(request, "New deposit address generated. Your previous addresses still work.")
+            else:
+                address_info = service.get_or_create_user_address(wallet)
             wallet.refresh_from_db()
-            qr_code = data["qr"]
         except Exception as exc:
             messages.error(request, f"Could not generate an address: {exc}")
     elif wallet.bitcoin_address:
         try:
-            qr_code = CustodialBitcoinService().generate_qr(wallet.bitcoin_address)
+            address_info = service.get_or_create_user_address(wallet)
         except Exception:
-            qr_code = ""
+            address_info = None
 
-    onchain_transactions = wallet.transactions.exclude(onchain_address="").order_by("-created_at")[:10]
+    onchain_transactions = (
+        wallet.transactions.exclude(onchain_txid="").exclude(network="lightning").order_by("-created_at")[:10]
+    )
     return render(request, "wallet/bitcoin.html", {
-        "wallet": wallet, "qr_code": qr_code, "onchain_transactions": onchain_transactions,
+        "wallet": wallet,
+        "qr_code": address_info["qr"] if address_info else "",
+        "address_info": address_info,
+        "confirmations_required": deposit_confirmations_required(),
+        "network": settings.BITCOIN_NETWORK,
+        "onchain_transactions": onchain_transactions,
     })
 
 

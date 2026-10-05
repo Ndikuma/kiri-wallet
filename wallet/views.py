@@ -173,19 +173,37 @@ class WalletViewSet(viewsets.GenericViewSet):
             },
         })
 
-    # ── on-chain Bitcoin (optional; requires bitcoinlib) ────
+    # ── on-chain Bitcoin (btclib HD wallet) ─────────────────
 
     @action(detail=False, methods=["GET"])
     def my_bitcoin_address(self, request):
         wallet = self._wallet()
         if not wallet.bitcoin_address:
-            return Response({"success": False, "message": "No deposit address generated yet. Call generate_deposit_address first."}, status=http_status.HTTP_404_NOT_FOUND)
+            return Response({"success": False, "message": "No deposit address generated yet. POST to this endpoint to create one."}, status=http_status.HTTP_404_NOT_FOUND)
         try:
-            service = CustodialBitcoinService()
-            qr = service.generate_qr(wallet.bitcoin_address)
+            data = CustodialBitcoinService().get_or_create_user_address(wallet)
         except Exception as exc:
             return Response({"success": False, "errors": [{"field": "address", "message": str(exc)}]}, status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
-        return Response({"success": True, "data": {"bitcoin_address": wallet.bitcoin_address, "qr_code": qr}})
+        return Response({"success": True, "data": {
+            "bitcoin_address": data["address"], "qr_code": data["qr"], "script_type": data["script_type"],
+            "network": data["network"], "confirmations_required": data["confirmations_required"],
+        }})
+
+    @action(detail=False, methods=["POST"])
+    def new_deposit_address(self, request):
+        """Rotate to a fresh deposit address; older ones keep being watched."""
+        wallet = self._wallet()
+        try:
+            result = CustodialBitcoinService().new_user_address(wallet)
+        except Exception as exc:
+            return Response({"success": False, "errors": [{"field": "address", "message": str(exc)}]}, status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"success": True, "data": result, "message": "New deposit address generated."})
+
+    @action(detail=False, methods=["GET"])
+    def bitcoin_deposits(self, request):
+        wallet = self._wallet()
+        deposits = wallet.transactions.filter(type=TransactionType.DEPOSIT).exclude(onchain_txid="")[:50]
+        return Response({"success": True, "data": WalletTransactionSerializer(deposits, many=True).data})
 
     @action(detail=False, methods=["POST"])
     def generate_deposit_address(self, request):

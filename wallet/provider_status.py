@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings as django_settings
 from django.db import models
 from django.db.models import Count, Sum
 
@@ -57,6 +58,21 @@ def get_blink_status() -> dict[str, Any]:
         }
 
 
+def _explorer_providers() -> list[dict[str, Any]]:
+    from wallet.models import BlockExplorerProvider
+
+    rows = BlockExplorerProvider.objects.filter(network=getattr(django_settings, "BITCOIN_NETWORK", ""))
+    return [
+        {
+            "name": r.name, "api_url": r.api_url, "priority": r.priority, "active": r.is_active,
+            "health": r.health, "latency_ms": r.last_latency_ms, "tip_height": r.last_tip_height,
+            "consecutive_failures": r.consecutive_failures, "last_checked_at": r.last_checked_at,
+            "message": r.last_check_message or r.last_error,
+        }
+        for r in rows
+    ]
+
+
 def get_onchain_status() -> dict[str, Any]:
     address_summary = Wallet.objects.aggregate(
         addresses=Count("id", filter=~models.Q(bitcoin_address="")),
@@ -84,9 +100,19 @@ def get_onchain_status() -> dict[str, Any]:
     except Exception as exc:
         provider_message = str(exc)
 
+    try:
+        from wallet.bitcoin import CustodialBitcoinService
+
+        cached = CustodialBitcoinService().cached_balance()
+    except Exception:  # noqa: BLE001 — status endpoint must never crash
+        cached = {}
+
     return {
         "success": provider_online,
         "configured": True,
+        "network": getattr(django_settings, "BITCOIN_NETWORK", ""),
+        "providers": _explorer_providers(),
+        "cached_balance": cached,
         "provider_balance_sats": provider_balance,
         "provider_balance_incomplete": provider_incomplete,
         "confirmed_deposits_sats": _to_int(deposit_summary["confirmed_sats"]),

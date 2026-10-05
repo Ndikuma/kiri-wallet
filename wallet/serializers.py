@@ -12,6 +12,7 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
         fields = [
             "id", "type", "type_display", "currency", "amount", "balance_after",
             "lnd_invoice", "lnd_payment_hash", "status", "status_display",
+            "onchain_address", "onchain_txid", "onchain_vout", "confirmations", "network", "network_fee_sats",
             "description", "linked_object_type", "linked_object_id",
             "created_at", "settled_at",
         ]

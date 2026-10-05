@@ -8,6 +8,8 @@ from .models import (
     AmatoPayCheckoutSession,
     AmatoPayWebhookEvent,
     BitcoinHDWallet,
+    BitcoinUTXO,
+    BlockExplorerProvider,
     ExchangeRate,
     PlatformBitcoinAddress,
     POSCharge,
@@ -76,6 +78,33 @@ class WalletTransactionAdmin(ModelAdmin):
     @display(description="On-chain TXID", ordering="onchain_txid")
     def display_onchain_txid(self, obj):
         return _explorer_link("tx", obj.onchain_txid)
+
+    actions = ["refund_stuck_onchain_withdrawal"]
+
+    @admin.action(description="Refund stuck on-chain withdrawal (only if not on the network)")
+    def refund_stuck_onchain_withdrawal(self, request, queryset):
+        from wallet.bitcoin import CustodialBitcoinService
+        from wallet.esplora_client import EsploraError, EsploraNotFound, get_tx_status
+
+        service = CustodialBitcoinService()
+        candidates = queryset.filter(type="withdrawal", status="pending").exclude(onchain_txid="")
+        for withdrawal in candidates:
+            try:
+                get_tx_status(withdrawal.onchain_txid)
+            except EsploraNotFound:
+                if service.refund_withdrawal(withdrawal, "refunded by an admin: transaction not on the network"):
+                    self.message_user(request, f"Refunded {withdrawal.amount} sats for {withdrawal.onchain_txid}.")
+                continue
+            except EsploraError as exc:
+                self.message_user(request, f"Could not check {withdrawal.onchain_txid}: {exc}", level="error")
+                continue
+            self.message_user(
+                request, f"{withdrawal.onchain_txid} is on the network; it will confirm, so it was not refunded.",
+                level="warning",
+            )
+        skipped = queryset.count() - candidates.count()
+        if skipped:
+            self.message_user(request, f"Skipped {skipped} row(s) that aren't pending on-chain withdrawals.", level="warning")
 
 
 @admin.register(WithdrawalFeePolicy)
@@ -161,9 +190,12 @@ class BitcoinHDWalletAdmin(ModelAdmin):
 
 @admin.register(PlatformBitcoinAddress)
 class PlatformBitcoinAddressAdmin(ModelAdmin):
-    list_display = ["display_address", "derivation_index", "label", "created_at"]
-    search_fields = ["address", "label"]
-    readonly_fields = ["id", "address", "derivation_index", "label", "created_at"]
+    list_display = ["display_address", "script_type", "purpose", "wallet", "derivation_path", "created_at"]
+    list_filter = ["script_type", "purpose"]
+    search_fields = ["address", "label", "wallet__user__username"]
+    readonly_fields = [
+        "id", "address", "derivation_index", "derivation_path", "script_type", "purpose", "wallet", "label", "created_at",
+    ]
 
     def has_add_permission(self, request):
         return False
@@ -171,3 +203,100 @@ class PlatformBitcoinAddressAdmin(ModelAdmin):
     @display(description="Address", ordering="address")
     def display_address(self, obj):
         return _explorer_link("address", obj.address)
+
+
+@admin.register(BitcoinUTXO)
+class BitcoinUTXOAdmin(ModelAdmin):
+    """The platform's on-chain coins, as cached by the scanner. Read-only."""
+
+    list_display = ["display_outpoint", "value", "status", "block_height", "display_address", "first_seen_at"]
+    list_filter = ["status"]
+    search_fields = ["txid", "address__address", "spent_by_txid"]
+    readonly_fields = [
+        "id", "address", "txid", "vout", "value", "block_height", "status", "spent_by_txid",
+        "reserved_by", "first_seen_at", "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @display(description="Outpoint", ordering="txid")
+    def display_outpoint(self, obj):
+        return format_html("{}:{}", _explorer_link("tx", obj.txid), obj.vout)
+
+    @display(description="Address")
+    def display_address(self, obj):
+        return _explorer_link("address", obj.address.address)
+
+
+_PROVIDER_HEALTH_LABELS = {"healthy": "success", "degraded": "warning", "down": "danger", "unchecked": "info"}
+
+
+@admin.register(BlockExplorerProvider)
+class BlockExplorerProviderAdmin(ModelAdmin):
+    """Block explorer APIs used for on-chain data and broadcast. Active providers for
+    the configured BITCOIN_NETWORK are tried in priority order (lowest first)."""
+
+    list_display = [
+        "name", "network", "api_url", "priority", "is_active", "display_health", "last_latency_ms",
+        "last_tip_height", "consecutive_failures", "last_checked_at",
+    ]
+    list_editable = ["priority", "is_active"]
+    list_filter = ["network", "is_active"]
+    search_fields = ["name", "api_url"]
+    actions = ["check_now", "activate", "deactivate"]
+    readonly_fields = [
+        "display_health", "last_checked_at", "last_check_ok", "last_check_message", "last_latency_ms",
+        "last_tip_height", "last_success_at", "last_failure_at", "last_error", "consecutive_failures",
+        "total_requests", "total_failures", "created_at", "updated_at",
+    ]
+    fieldsets = [
+        (None, {"fields": ["name", "network", "api_url", "web_url", "priority", "is_active", "timeout_seconds"]}),
+        ("Authentication (private or paid instances only)", {"fields": ["auth_header", "auth_value"]}),
+        ("Health", {"fields": readonly_fields}),
+    ]
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if "auth_value" in form.base_fields:
+            from django import forms
+
+            # Don't echo a stored secret back into the page.
+            form.base_fields["auth_value"].widget = forms.PasswordInput(render_value=False)
+            form.base_fields["auth_value"].required = False
+            form.base_fields["auth_value"].help_text = "Leave empty to keep the current value."
+        return form
+
+    def save_model(self, request, obj, form, change):
+        if change and not form.cleaned_data.get("auth_value"):
+            obj.auth_value = BlockExplorerProvider.objects.get(pk=obj.pk).auth_value
+        super().save_model(request, obj, form, change)
+        if not change:
+            self._check(request, [obj])
+
+    @display(description="Health", label=_PROVIDER_HEALTH_LABELS)
+    def display_health(self, obj):
+        return obj.health
+
+    def _check(self, request, rows):
+        from wallet.esplora_client import check_providers
+
+        for result in check_providers(rows):
+            provider = result["provider"]
+            level = "success" if result["ok"] else "error"
+            self.message_user(request, f"{provider}: {result['message'] or 'failed'}", level=level)
+
+    @admin.action(description="Check now (reachability, chain, tip, fees)")
+    def check_now(self, request, queryset):
+        self._check(request, queryset)
+
+    @admin.action(description="Enable selected providers")
+    def activate(self, request, queryset):
+        self.message_user(request, f"Enabled {queryset.update(is_active=True)} provider(s).")
+
+    @admin.action(description="Disable selected providers")
+    def deactivate(self, request, queryset):
+        self.message_user(request, f"Disabled {queryset.update(is_active=False)} provider(s).")

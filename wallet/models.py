@@ -244,6 +244,17 @@ class WalletTransaction(models.Model):
     lnd_payment_hash = models.CharField(max_length=66, blank=True, default="", db_index=True)
     onchain_address = models.CharField(max_length=120, blank=True, default="")
     onchain_txid = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    onchain_vout = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Output index of an on-chain deposit — one transaction can pay several outputs/users.",
+    )
+    onchain_raw_tx = models.TextField(
+        blank=True, default="",
+        help_text="Signed raw transaction of an on-chain withdrawal, kept so it can be rebroadcast.",
+    )
+    network_fee_sats = models.BigIntegerField(
+        default=0, help_text="Miner fee paid by the platform for an on-chain withdrawal.",
+    )
     confirmations = models.PositiveIntegerField(default=0)
     network = models.CharField(max_length=30, blank=True, default="")
 
@@ -262,6 +273,14 @@ class WalletTransaction(models.Model):
             models.Index(fields=["type"]),
             models.Index(fields=["onchain_address"]),
             models.Index(fields=["onchain_txid"]),
+        ]
+        constraints = [
+            # An on-chain output can only ever be credited once as a deposit.
+            models.UniqueConstraint(
+                fields=["onchain_txid", "onchain_vout"],
+                condition=models.Q(type="deposit", onchain_vout__isnull=False),
+                name="unique_onchain_deposit_output",
+            ),
         ]
 
     def __str__(self):
@@ -466,12 +485,33 @@ class BitcoinHDWallet(models.Model):
         return f"BitcoinHDWallet({self.network}, next_index={self.next_index})"
 
 
+class BitcoinScriptType(models.TextChoices):
+    P2PKH = "p2pkh", "Legacy (P2PKH)"
+    P2WPKH = "p2wpkh", "Native SegWit (P2WPKH)"
+
+
+class BitcoinAddressPurpose(models.TextChoices):
+    DEPOSIT = "deposit", "User deposit"
+    CHANGE = "change", "Withdrawal change"
+
+
 class PlatformBitcoinAddress(models.Model):
     """One address derived from `BitcoinHDWallet`, for a user deposit or internal change."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     address = models.CharField(max_length=120, unique=True, db_index=True)
     derivation_index = models.PositiveIntegerField(unique=True)
+    derivation_path = models.CharField(max_length=60, blank=True, default="")
+    script_type = models.CharField(
+        max_length=10, choices=BitcoinScriptType.choices, default=BitcoinScriptType.P2PKH,
+    )
+    purpose = models.CharField(
+        max_length=10, choices=BitcoinAddressPurpose.choices, default=BitcoinAddressPurpose.DEPOSIT,
+    )
+    wallet = models.ForeignKey(
+        Wallet, null=True, blank=True, on_delete=models.SET_NULL, related_name="bitcoin_addresses",
+        help_text="Owner of a deposit address; deposits to it are credited to this wallet.",
+    )
     label = models.CharField(max_length=100, blank=True, default="", help_text="e.g. user-<wallet_id> or change.")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -480,3 +520,123 @@ class PlatformBitcoinAddress(models.Model):
 
     def __str__(self):
         return f"{self.address} (#{self.derivation_index}, {self.label or 'unlabeled'})"
+
+
+class BitcoinUTXOStatus(models.TextChoices):
+    UNSPENT = "unspent", "Unspent"
+    RESERVED = "reserved", "Reserved by a withdrawal"
+    SPENT = "spent", "Spent"
+    DROPPED = "dropped", "Dropped from mempool"
+
+
+class BitcoinUTXO(models.Model):
+    """Local cache of the platform's on-chain outputs.
+
+    Filled by the deposit scanner and by withdrawals (their change output), and
+    used for coin selection so withdrawals never re-query an explorer for every
+    address, and two concurrent withdrawals can never pick the same coins
+    (rows are claimed with SELECT ... FOR UPDATE and marked RESERVED).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    address = models.ForeignKey(PlatformBitcoinAddress, on_delete=models.PROTECT, related_name="utxos")
+    txid = models.CharField(max_length=64)
+    vout = models.PositiveIntegerField()
+    value = models.BigIntegerField(help_text="Output value in satoshis.")
+    block_height = models.PositiveIntegerField(null=True, blank=True, help_text="Null while unconfirmed.")
+    status = models.CharField(
+        max_length=10, choices=BitcoinUTXOStatus.choices, default=BitcoinUTXOStatus.UNSPENT, db_index=True,
+    )
+    spent_by_txid = models.CharField(max_length=64, blank=True, default="")
+    reserved_by = models.ForeignKey(
+        "WalletTransaction", null=True, blank=True, on_delete=models.SET_NULL, related_name="reserved_utxos",
+    )
+    first_seen_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-first_seen_at"]
+        constraints = [models.UniqueConstraint(fields=["txid", "vout"], name="unique_bitcoin_outpoint")]
+        indexes = [models.Index(fields=["status", "block_height"])]
+
+    def __str__(self):
+        return f"{self.txid}:{self.vout} {self.value} sats [{self.status}]"
+
+    def confirmations(self, tip_height: int | None) -> int:
+        if not self.block_height or tip_height is None:
+            return 0
+        return max(tip_height - self.block_height + 1, 0)
+
+
+class BitcoinNetwork(models.TextChoices):
+    MAINNET = "mainnet", "Mainnet"
+    TESTNET4 = "testnet4", "Testnet4"
+    TESTNET = "testnet", "Testnet3"
+    SIGNET = "signet", "Signet"
+    REGTEST = "regtest", "Regtest"
+
+
+class BlockExplorerProvider(models.Model):
+    """An Esplora-compatible block explorer API (mempool.space, blockstream.info,
+    or your own esplora/electrs/mempool instance) used for on-chain data and broadcast.
+
+    Active providers for the configured BITCOIN_NETWORK are tried in priority order;
+    the next one is used when one fails. Health fields are updated on every request
+    and by health checks (`check_providers`, the admin "Check now" action).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=80)
+    network = models.CharField(max_length=20, choices=BitcoinNetwork.choices, db_index=True)
+    api_url = models.URLField(
+        max_length=300, help_text="Esplora API base URL, e.g. https://mempool.space/testnet4/api (no trailing slash).",
+    )
+    web_url = models.URLField(
+        max_length=300, blank=True, default="",
+        help_text="Optional explorer website for 'view transaction' links, e.g. https://mempool.space/testnet4.",
+    )
+    priority = models.PositiveIntegerField(default=100, help_text="Lower is tried first.")
+    is_active = models.BooleanField(default=True)
+    timeout_seconds = models.PositiveIntegerField(default=15, help_text="Read timeout per request.")
+    auth_header = models.CharField(
+        max_length=60, blank=True, default="",
+        help_text="Optional header name for a private/paid instance, e.g. Authorization or X-API-Key.",
+    )
+    auth_value = models.CharField(
+        max_length=300, blank=True, default="",
+        help_text="Value sent in that header, e.g. 'Bearer <token>'. Never shown in lists.",
+    )
+
+    # Health, maintained automatically.
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    last_check_ok = models.BooleanField(null=True, blank=True)
+    last_check_message = models.CharField(max_length=500, blank=True, default="")
+    last_latency_ms = models.PositiveIntegerField(null=True, blank=True)
+    last_tip_height = models.PositiveIntegerField(null=True, blank=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=500, blank=True, default="")
+    consecutive_failures = models.PositiveIntegerField(default=0)
+    total_requests = models.PositiveBigIntegerField(default=0)
+    total_failures = models.PositiveBigIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["network", "priority", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["network", "api_url"], name="unique_provider_url_per_network"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_network_display()})"
+
+    @property
+    def health(self) -> str:
+        """unchecked / healthy / degraded / down — for display."""
+        if self.consecutive_failures >= 3 or self.last_check_ok is False:
+            return "down" if self.consecutive_failures >= 3 else "degraded"
+        if self.last_check_ok is None and not self.total_requests:
+            return "unchecked"
+        return "degraded" if self.consecutive_failures else "healthy"

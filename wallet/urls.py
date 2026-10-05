@@ -14,6 +14,8 @@ urlpatterns = [
     path("withdraw/", WalletViewSet.as_view({"post": "withdraw"}), name="wallet-withdraw"),
 
     path("bitcoin/", WalletViewSet.as_view({"get": "my_bitcoin_address", "post": "generate_deposit_address"}), name="wallet-bitcoin"),
+    path("bitcoin/new-address/", WalletViewSet.as_view({"post": "new_deposit_address"}), name="wallet-bitcoin-new-address"),
+    path("bitcoin/deposits/", WalletViewSet.as_view({"get": "bitcoin_deposits"}), name="wallet-bitcoin-deposits"),
 
     path("blink/", WalletViewSet.as_view({"get": "blink_status"}), name="wallet-blink"),
     path("onchain/", WalletViewSet.as_view({"get": "onchain_status"}), name="wallet-onchain"),
