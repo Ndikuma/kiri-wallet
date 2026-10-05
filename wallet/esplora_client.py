@@ -1,8 +1,8 @@
 """
 Thin client for Esplora-compatible block explorer APIs (blockstream.info,
 mempool.space). Used for UTXO/balance lookups, fee estimation, and
-broadcasting signed transactions — python-bitcoinlib itself has no network
-layer, it only builds/signs/serializes.
+broadcasting signed transactions — btclib itself has no network layer, it
+only builds/signs/serializes.
 
 Resilience has two layers:
   1. One quick retry on a transient *server-side* blip — a 502/503/504
@@ -127,7 +127,15 @@ def explorer_web_base() -> str | None:
 
 
 class EsploraError(Exception):
-    pass
+    """No configured provider could answer (unreachable, timeout, 5xx...)."""
+
+
+class EsploraNotFound(EsploraError):
+    """A provider answered definitively: the requested object (e.g. a txid) does not exist."""
+
+
+class EsploraRejected(EsploraError):
+    """A provider answered definitively: the broadcast transaction was rejected (HTTP 400)."""
 
 
 def _get(path: str, timeout: tuple[int, int] = (2, 15)) -> Any:
@@ -139,6 +147,8 @@ def _get(path: str, timeout: tuple[int, int] = (2, 15)) -> Any:
     for base in _providers():
         try:
             r = _SESSION.get(f"{base}{path}", timeout=timeout)
+            if r.status_code == 404:
+                raise EsploraNotFound(f"{base}{path} returned 404")
             r.raise_for_status()
             return r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text
         except requests.RequestException as exc:
@@ -152,6 +162,11 @@ def _post(path: str, data: str, timeout: tuple[int, int] = (2, 20)) -> str:
     for base in _providers():
         try:
             r = _SESSION.post(f"{base}{path}", data=data, timeout=timeout)
+            if r.status_code == 400:
+                # The provider parsed and validated the transaction and refused it
+                # (bad signature, inputs already spent, fee too low...). Another
+                # provider would refuse it too — this is a definitive answer.
+                raise EsploraRejected(f"Transaction rejected by {base}: {r.text.strip()[:300]}")
             r.raise_for_status()
             return r.text.strip()
         except requests.RequestException as exc:
@@ -182,9 +197,21 @@ def get_utxos(address: str) -> list[dict[str, Any]]:
             "vout": entry["vout"],
             "value": int(entry["value"]),
             "confirmed": confirmed,
+            "block_height": int(block_height) if confirmed and block_height else None,
             "confirmations": confirmations,
         })
     return utxos
+
+
+def get_tx_status(txid: str) -> dict[str, Any]:
+    """{"confirmed": bool, "block_height": int|None} for a known transaction.
+
+    Raises EsploraNotFound if the explorer does not know the txid at all (never
+    broadcast, or dropped from the mempool) and EsploraError if it can't be reached.
+    """
+    data = _get(f"/tx/{txid}/status")
+    confirmed = bool(data.get("confirmed"))
+    return {"confirmed": confirmed, "block_height": data.get("block_height") if confirmed else None}
 
 
 def get_address_balance(address: str) -> int:

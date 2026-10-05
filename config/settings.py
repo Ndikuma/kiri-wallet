@@ -170,6 +170,20 @@ AMATOPAY_WEBHOOK_SECRET = os.getenv("AMATOPAY_WEBHOOK_SECRET", "")
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 BITCOIN_NETWORK = os.getenv("BITCOIN_NETWORK", "testnet4")
 WALLET_ENCRYPTION_KEY = os.getenv("WALLET_ENCRYPTION_KEY", "")
+# Address type for newly generated addresses: "p2wpkh" (native SegWit, bc1q/tb1q,
+# ~40% cheaper to spend) or "p2pkh" (legacy). Existing addresses keep their type.
+BITCOIN_ADDRESS_TYPE = os.getenv("BITCOIN_ADDRESS_TYPE", "p2wpkh")
+# A deposit is pending until it has this many confirmations, then becomes spendable.
+BITCOIN_DEPOSIT_CONFIRMATIONS = int(os.getenv("BITCOIN_DEPOSIT_CONFIRMATIONS", "4"))
+# A withdrawal is marked confirmed once its transaction has this many confirmations.
+BITCOIN_WITHDRAWAL_CONFIRMATIONS = int(os.getenv("BITCOIN_WITHDRAWAL_CONFIRMATIONS", "1"))
+# Fee rate (sat/vB) bounds and confirmation target for withdrawals.
+BITCOIN_FEE_TARGET_BLOCKS = int(os.getenv("BITCOIN_FEE_TARGET_BLOCKS", "6"))
+BITCOIN_MIN_FEE_RATE = float(os.getenv("BITCOIN_MIN_FEE_RATE", "1"))
+BITCOIN_MAX_FEE_RATE = float(os.getenv("BITCOIN_MAX_FEE_RATE", "500"))
+# An unconfirmed transaction that vanishes from the explorer is only treated as
+# dropped (pending deposit cancelled / withdrawal refunded) after this long.
+BITCOIN_DROPPED_TX_GRACE_HOURS = int(os.getenv("BITCOIN_DROPPED_TX_GRACE_HOURS", "24"))
 
 
 # ── Celery (Blink invoice-poll fallback task) ───────────────

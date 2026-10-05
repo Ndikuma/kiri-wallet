@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings as django_settings
 from django.db import models
 from django.db.models import Count, Sum
 
@@ -84,9 +85,18 @@ def get_onchain_status() -> dict[str, Any]:
     except Exception as exc:
         provider_message = str(exc)
 
+    try:
+        from wallet.bitcoin import CustodialBitcoinService
+
+        cached = CustodialBitcoinService().cached_balance()
+    except Exception:  # noqa: BLE001 — status endpoint must never crash
+        cached = {}
+
     return {
         "success": provider_online,
         "configured": True,
+        "network": getattr(django_settings, "BITCOIN_NETWORK", ""),
+        "cached_balance": cached,
         "provider_balance_sats": provider_balance,
         "provider_balance_incomplete": provider_incomplete,
         "confirmed_deposits_sats": _to_int(deposit_summary["confirmed_sats"]),

@@ -9,7 +9,7 @@ top-up rail through AmatoPay's merchant checkout API.
 - `accounts` — custom user model, registration, JWT login (`/api/auth/`)
 - `wallet` — everything else, under `/api/wallet/`:
   - **Lightning wallet** (real implementation, via [Blink](https://blink.sv)'s custodial API): deposit invoices, withdrawals to a Lightning invoice/address/LNURL, real-time settlement over a WebSocket subscriber, admin-configurable withdrawal fees.
-  - **On-chain Bitcoin** (real implementation, via [btclib](https://github.com/btclib-org/btclib) + blockstream.info/mempool.space): one BIP32 HD wallet for the whole platform, per-user deposit addresses, deposit scanning, and on-chain withdrawal (build → sign → locally re-verify → broadcast a real P2PKH transaction). See the security note below before pointing this at mainnet.
+  - **On-chain Bitcoin** (real implementation, via [btclib](https://github.com/btclib-org/btclib) + blockstream.info/mempool.space): one BIP32 HD wallet for the whole platform, native SegWit (P2WPKH) deposit addresses (legacy P2PKH still supported), per-output deposit tracking with pending → confirmed promotion, a local UTXO cache for coin selection, and on-chain withdrawal (reserve → build → sign → locally re-verify → broadcast, with RBF, refunds on rejection, rebroadcast and confirmation tracking). See the security note below before pointing this at mainnet.
   - **BIF exchange**: an admin-configurable BTC→BIF rate; exchange a user's sats for BIF (one-directional — BIF is not sold back for sats).
   - **POS charges**: quote a Lightning invoice for `amount_sats`, lock in the BIF equivalent at creation time, and credit the merchant's BIF balance (not sats) once it's paid — so the merchant isn't exposed to BTC price moves between charge and settlement.
   - **AmatoPay BIF top-up**: create an AmatoPay hosted-checkout session against a payer's mobile-money alias; poll it and credit `bif_balance` once AmatoPay reports the payment collected.
@@ -41,7 +41,7 @@ Run the monitor (a separate long-lived process, e.g. a systemd unit or a second 
 python manage.py worker --backfill
 ```
 
-`worker` runs both monitors together in one process: the Blink WebSocket subscriber (Lightning, push/real-time) and a periodic on-chain scan (Bitcoin, poll — there's no push mechanism for on-chain deposits). Each side degrades on its own if unconfigured (no `BLINK_API_KEY` just logs a warning and skips Lightning) rather than taking the other down. Useful flags:
+`worker` runs both monitors together in one process: the Blink WebSocket subscriber (Lightning, push/real-time) and a periodic on-chain scan (Bitcoin, poll — there's no push mechanism for on-chain deposits). Each on-chain pass credits new deposits, promotes pending ones that reached `BITCOIN_DEPOSIT_CONFIRMATIONS`, cancels unconfirmed ones that were dropped from the mempool, and advances pending withdrawals (confirmations, rebroadcast). `python manage.py bitcoin_info` prints the on-chain wallet state from the database without touching the network. Each side degrades on its own if unconfigured (no `BLINK_API_KEY` just logs a warning and skips Lightning) rather than taking the other down. Useful flags:
 
 ```bash
 python manage.py worker --onchain-interval 30      # scan on-chain every 30s (default 60)
@@ -73,6 +73,11 @@ celery -A config beat -l info    # if scheduling poll_blink_invoice_update perio
 | `AMATOPAY_API_KEY`, `AMATOPAY_BASE_URL` | AmatoPay merchant secret key (`sk_...`) and base URL, for BIF top-ups. |
 | `AMATOPAY_WEBHOOK_SECRET` | AmatoPay webhook signing secret (`whsec_...`), shown once when you add `https://<this-host>/webhooks/amatopay/` under Merchant Dashboard → Developers. Verifies the `AmatoPay-Signature` header on incoming `payment.paid` / `payment.failed` / `settlement.completed` deliveries. |
 | `BITCOIN_NETWORK` | `testnet4` (default), `testnet` (testnet3, largely dead in practice), or `mainnet` — which chain the platform's HD wallet and every derived address belong to. testnet3 and testnet4 share the *same address format* but are separate chains with separate transaction histories — see the on-chain section below. |
+| `BITCOIN_ADDRESS_TYPE` | `p2wpkh` (default, native SegWit `bc1q…`/`tb1q…`, cheaper to spend) or `p2pkh` (legacy) for newly generated addresses. Existing addresses keep their type and stay spendable. |
+| `BITCOIN_DEPOSIT_CONFIRMATIONS` | Confirmations before an on-chain deposit becomes spendable (default `4`). Until then it is shown as pending. |
+| `BITCOIN_WITHDRAWAL_CONFIRMATIONS` | Confirmations before an on-chain withdrawal is marked confirmed (default `1`). |
+| `BITCOIN_FEE_TARGET_BLOCKS`, `BITCOIN_MIN_FEE_RATE`, `BITCOIN_MAX_FEE_RATE` | Withdrawal fee rate: the explorer's estimate for this confirmation target (default `6` blocks), clamped to `[1, 500]` sat/vB by default. |
+| `BITCOIN_DROPPED_TX_GRACE_HOURS` | How long an unconfirmed deposit may be missing from the explorer before it's treated as dropped and its pending credit cancelled (default `24`). |
 | `WALLET_ENCRYPTION_KEY` | Fernet key encrypting the platform's BIP32 root xprv at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Back this up along with the database** — losing it loses every on-chain address's funds. |
 | `REDIS_URL` | Celery broker, only needed if you run the polling fallback task. |
 | `LOG_LEVEL` | Console log level (default `INFO`) — without a `LOGGING` config, Python drops `.info()`/`.debug()` calls entirely, so this is what makes `worker`/`blink_ws`/`scan_bitcoin` actually visible. |
@@ -87,10 +92,12 @@ Wallet (`/api/wallet/`), all requiring `Authorization: Bearer <access_token>`:
 - `GET  /transactions/` — unified ledger (sats and BIF transactions both, tagged by `currency`)
 - `POST /deposit/` `{amount, memo}` — create a Lightning deposit invoice
 - `GET  /deposit_status/?payment_hash=` — poll a deposit's settlement status
-- `POST /withdraw/decode/` `{target}` — parse a Lightning invoice/address/LNURL/Bitcoin address
-- `POST /withdraw/fees/` `{target, amount}` — quote the withdrawal fee
+- `POST /withdraw/decode/` `{target}` — parse a Lightning invoice/address/LNURL/Bitcoin address or BIP21 `bitcoin:` URI (its `amount` is used); Bitcoin addresses for the wrong network are refused
+- `POST /withdraw/fees/` `{target, amount}` — quote the withdrawal fee (for Bitcoin addresses, also the estimated network fee and whether the platform has enough on-chain coins)
 - `POST /withdraw/` `{target, amount, memo}` — pay out over Lightning or on-chain
-- `GET|POST /bitcoin/` — fetch/generate the user's on-chain deposit address
+- `GET|POST /bitcoin/` — fetch/generate the user's on-chain deposit address (with QR, address type, network, confirmations required)
+- `POST /bitcoin/new-address/` — rotate to a fresh deposit address (previous addresses keep being watched and credited)
+- `GET  /bitcoin/deposits/` — the user's on-chain deposits with confirmation counts
 - `GET  /blink/`, `/onchain/`, `/amatopay/` — provider connectivity status
 - `GET  /exchange/rate/` — current BTC→BIF rate
 - `POST /exchange/quote/` `{amount_sats}` — quote the BIF equivalent, without moving any balance
@@ -105,19 +112,36 @@ Wallet (`/api/wallet/`), all requiring `Authorization: Bearer <access_token>`:
 - **One HD wallet, not one key per address.** `BitcoinHDWallet` holds a single
   BIP32 root xprv (generated once, encrypted at rest with `WALLET_ENCRYPTION_KEY`).
   Every address — a user's deposit address, or an internal change address
-  created during a withdrawal — is a deterministic child at
-  `m/44'/<coin_type>'/0'/0/<index>`, tracked in `PlatformBitcoinAddress`. There
-  is exactly one secret to back up, rotate, and restrict access to.
-- **Withdrawals are verified before they're broadcast.** Building a raw P2PKH
-  transaction, signing each input, and then running it back through btclib's
-  own consensus script engine (`verify_transaction`) means a signing bug
-  raises a local error instead of broadcasting a transaction that fails or
-  (worse) spends incorrectly.
-- **Coin selection is address-by-address**, scanning every `PlatformBitcoinAddress`'s
-  UTXOs on each withdrawal via blockstream.info/mempool.space. Fine for a
-  first version; a production deployment should maintain a local UTXO cache
-  updated by the deposit scanner instead of re-querying an explorer for every
-  address on every withdrawal.
+  created during a withdrawal — is a deterministic child, tracked in
+  `PlatformBitcoinAddress` with its full derivation path:
+  `m/84'/<coin_type>'/0'/<chain>/<index>` for native SegWit (the default) or
+  `m/44'/…` for legacy, with `<chain>` 0 for deposits and 1 for change. There
+  is exactly one secret to back up, rotate, and restrict access to. Before
+  signing, every key is re-derived and checked against the stored address.
+- **Deposits are tracked per output (txid:vout)**, so one transaction paying
+  several users credits each of them. A deposit is *pending* (counted in
+  `pending_balance`) until it has `BITCOIN_DEPOSIT_CONFIRMATIONS`, then a later
+  scan moves it to `available_balance`. If an unconfirmed deposit disappears
+  from the network for longer than `BITCOIN_DROPPED_TX_GRACE_HOURS`, its
+  pending credit is cancelled.
+- **Coin selection uses a local UTXO cache** (`BitcoinUTXO`), kept up to date by
+  the scanner and by each withdrawal's change output. Withdrawals lock the
+  coins they pick (`SELECT … FOR UPDATE`, status `reserved`), so concurrent
+  withdrawals can't double-spend. Only confirmed change and *credited* deposits
+  are ever spent. The network fee is paid by the platform out of these coins
+  (recorded as `network_fee_sats`); users pay the `WithdrawalFeePolicy` fee.
+- **Withdrawals are safe at every step.** The user's balance is debited (with
+  a row lock) before anything is signed; the transaction is built, signed
+  (P2WPKH and/or P2PKH inputs), run back through btclib's own consensus script
+  engine (`verify_transaction`), and stored *before* broadcasting. If the
+  network rejects it, the user is refunded automatically. If the explorer
+  can't be reached mid-broadcast, the withdrawal stays pending and the
+  scanner rebroadcasts it until it's seen, then counts confirmations. A
+  withdrawal that still can't be broadcast is never refunded automatically
+  (an earlier broadcast might still confirm): an admin can refund it from
+  *Wallet transactions → "Refund stuck on-chain withdrawal"*, which first
+  checks the explorer that the transaction really isn't on the network.
+  Withdrawals signal RBF (BIP125).
 - **Scanning is 100% our own HTTP calls to a public block explorer** —
   `wallet/esplora_client.py` hits blockstream.info/mempool.space's REST APIs
   directly (the same ones a browser or `curl` would). btclib does no network

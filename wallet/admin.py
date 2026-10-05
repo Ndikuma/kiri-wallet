@@ -8,6 +8,7 @@ from .models import (
     AmatoPayCheckoutSession,
     AmatoPayWebhookEvent,
     BitcoinHDWallet,
+    BitcoinUTXO,
     ExchangeRate,
     PlatformBitcoinAddress,
     POSCharge,
@@ -76,6 +77,33 @@ class WalletTransactionAdmin(ModelAdmin):
     @display(description="On-chain TXID", ordering="onchain_txid")
     def display_onchain_txid(self, obj):
         return _explorer_link("tx", obj.onchain_txid)
+
+    actions = ["refund_stuck_onchain_withdrawal"]
+
+    @admin.action(description="Refund stuck on-chain withdrawal (only if not on the network)")
+    def refund_stuck_onchain_withdrawal(self, request, queryset):
+        from wallet.bitcoin import CustodialBitcoinService
+        from wallet.esplora_client import EsploraError, EsploraNotFound, get_tx_status
+
+        service = CustodialBitcoinService()
+        candidates = queryset.filter(type="withdrawal", status="pending").exclude(onchain_txid="")
+        for withdrawal in candidates:
+            try:
+                get_tx_status(withdrawal.onchain_txid)
+            except EsploraNotFound:
+                if service.refund_withdrawal(withdrawal, "refunded by an admin: transaction not on the network"):
+                    self.message_user(request, f"Refunded {withdrawal.amount} sats for {withdrawal.onchain_txid}.")
+                continue
+            except EsploraError as exc:
+                self.message_user(request, f"Could not check {withdrawal.onchain_txid}: {exc}", level="error")
+                continue
+            self.message_user(
+                request, f"{withdrawal.onchain_txid} is on the network; it will confirm, so it was not refunded.",
+                level="warning",
+            )
+        skipped = queryset.count() - candidates.count()
+        if skipped:
+            self.message_user(request, f"Skipped {skipped} row(s) that aren't pending on-chain withdrawals.", level="warning")
 
 
 @admin.register(WithdrawalFeePolicy)
@@ -161,9 +189,12 @@ class BitcoinHDWalletAdmin(ModelAdmin):
 
 @admin.register(PlatformBitcoinAddress)
 class PlatformBitcoinAddressAdmin(ModelAdmin):
-    list_display = ["display_address", "derivation_index", "label", "created_at"]
-    search_fields = ["address", "label"]
-    readonly_fields = ["id", "address", "derivation_index", "label", "created_at"]
+    list_display = ["display_address", "script_type", "purpose", "wallet", "derivation_path", "created_at"]
+    list_filter = ["script_type", "purpose"]
+    search_fields = ["address", "label", "wallet__user__username"]
+    readonly_fields = [
+        "id", "address", "derivation_index", "derivation_path", "script_type", "purpose", "wallet", "label", "created_at",
+    ]
 
     def has_add_permission(self, request):
         return False
@@ -171,3 +202,30 @@ class PlatformBitcoinAddressAdmin(ModelAdmin):
     @display(description="Address", ordering="address")
     def display_address(self, obj):
         return _explorer_link("address", obj.address)
+
+
+@admin.register(BitcoinUTXO)
+class BitcoinUTXOAdmin(ModelAdmin):
+    """The platform's on-chain coins, as cached by the scanner. Read-only."""
+
+    list_display = ["display_outpoint", "value", "status", "block_height", "display_address", "first_seen_at"]
+    list_filter = ["status"]
+    search_fields = ["txid", "address__address", "spent_by_txid"]
+    readonly_fields = [
+        "id", "address", "txid", "vout", "value", "block_height", "status", "spent_by_txid",
+        "reserved_by", "first_seen_at", "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @display(description="Outpoint", ordering="txid")
+    def display_outpoint(self, obj):
+        return format_html("{}:{}", _explorer_link("tx", obj.txid), obj.vout)
+
+    @display(description="Address")
+    def display_address(self, obj):
+        return _explorer_link("address", obj.address.address)

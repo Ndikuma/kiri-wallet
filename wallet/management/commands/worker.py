@@ -101,7 +101,16 @@ class Command(BaseCommand):
                 processed = result["processed"]
                 failed = result["failed"]
                 if processed:
-                    logger.info("On-chain scan processed %d deposit(s): %s", len(processed), processed)
+                    logger.info("On-chain scan found %d new deposit(s): %s", len(processed), processed)
+                if result.get("promoted"):
+                    logger.info("On-chain scan confirmed %d deposit(s): %s", len(result["promoted"]), result["promoted"])
+                if result.get("dropped"):
+                    logger.warning("On-chain scan: %d unconfirmed deposit(s) dropped: %s", len(result["dropped"]), result["dropped"])
+                withdrawals = result.get("withdrawals", {})
+                if withdrawals.get("confirmed") or withdrawals.get("rebroadcast"):
+                    logger.info("On-chain withdrawals: %s", withdrawals)
+                if withdrawals.get("unresolved"):
+                    logger.error("On-chain withdrawals need review: %s", withdrawals["unresolved"])
                 if failed:
                     # Distinct from "nothing new": these addresses could not be checked at
                     # all (e.g. the explorer provider is unreachable) — surfaced, not silent.

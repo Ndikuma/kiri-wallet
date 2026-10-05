@@ -244,6 +244,17 @@ class WalletTransaction(models.Model):
     lnd_payment_hash = models.CharField(max_length=66, blank=True, default="", db_index=True)
     onchain_address = models.CharField(max_length=120, blank=True, default="")
     onchain_txid = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    onchain_vout = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Output index of an on-chain deposit — one transaction can pay several outputs/users.",
+    )
+    onchain_raw_tx = models.TextField(
+        blank=True, default="",
+        help_text="Signed raw transaction of an on-chain withdrawal, kept so it can be rebroadcast.",
+    )
+    network_fee_sats = models.BigIntegerField(
+        default=0, help_text="Miner fee paid by the platform for an on-chain withdrawal.",
+    )
     confirmations = models.PositiveIntegerField(default=0)
     network = models.CharField(max_length=30, blank=True, default="")
 
@@ -262,6 +273,14 @@ class WalletTransaction(models.Model):
             models.Index(fields=["type"]),
             models.Index(fields=["onchain_address"]),
             models.Index(fields=["onchain_txid"]),
+        ]
+        constraints = [
+            # An on-chain output can only ever be credited once as a deposit.
+            models.UniqueConstraint(
+                fields=["onchain_txid", "onchain_vout"],
+                condition=models.Q(type="deposit", onchain_vout__isnull=False),
+                name="unique_onchain_deposit_output",
+            ),
         ]
 
     def __str__(self):
@@ -466,12 +485,33 @@ class BitcoinHDWallet(models.Model):
         return f"BitcoinHDWallet({self.network}, next_index={self.next_index})"
 
 
+class BitcoinScriptType(models.TextChoices):
+    P2PKH = "p2pkh", "Legacy (P2PKH)"
+    P2WPKH = "p2wpkh", "Native SegWit (P2WPKH)"
+
+
+class BitcoinAddressPurpose(models.TextChoices):
+    DEPOSIT = "deposit", "User deposit"
+    CHANGE = "change", "Withdrawal change"
+
+
 class PlatformBitcoinAddress(models.Model):
     """One address derived from `BitcoinHDWallet`, for a user deposit or internal change."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     address = models.CharField(max_length=120, unique=True, db_index=True)
     derivation_index = models.PositiveIntegerField(unique=True)
+    derivation_path = models.CharField(max_length=60, blank=True, default="")
+    script_type = models.CharField(
+        max_length=10, choices=BitcoinScriptType.choices, default=BitcoinScriptType.P2PKH,
+    )
+    purpose = models.CharField(
+        max_length=10, choices=BitcoinAddressPurpose.choices, default=BitcoinAddressPurpose.DEPOSIT,
+    )
+    wallet = models.ForeignKey(
+        Wallet, null=True, blank=True, on_delete=models.SET_NULL, related_name="bitcoin_addresses",
+        help_text="Owner of a deposit address; deposits to it are credited to this wallet.",
+    )
     label = models.CharField(max_length=100, blank=True, default="", help_text="e.g. user-<wallet_id> or change.")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -480,3 +520,49 @@ class PlatformBitcoinAddress(models.Model):
 
     def __str__(self):
         return f"{self.address} (#{self.derivation_index}, {self.label or 'unlabeled'})"
+
+
+class BitcoinUTXOStatus(models.TextChoices):
+    UNSPENT = "unspent", "Unspent"
+    RESERVED = "reserved", "Reserved by a withdrawal"
+    SPENT = "spent", "Spent"
+    DROPPED = "dropped", "Dropped from mempool"
+
+
+class BitcoinUTXO(models.Model):
+    """Local cache of the platform's on-chain outputs.
+
+    Filled by the deposit scanner and by withdrawals (their change output), and
+    used for coin selection so withdrawals never re-query an explorer for every
+    address, and two concurrent withdrawals can never pick the same coins
+    (rows are claimed with SELECT ... FOR UPDATE and marked RESERVED).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    address = models.ForeignKey(PlatformBitcoinAddress, on_delete=models.PROTECT, related_name="utxos")
+    txid = models.CharField(max_length=64)
+    vout = models.PositiveIntegerField()
+    value = models.BigIntegerField(help_text="Output value in satoshis.")
+    block_height = models.PositiveIntegerField(null=True, blank=True, help_text="Null while unconfirmed.")
+    status = models.CharField(
+        max_length=10, choices=BitcoinUTXOStatus.choices, default=BitcoinUTXOStatus.UNSPENT, db_index=True,
+    )
+    spent_by_txid = models.CharField(max_length=64, blank=True, default="")
+    reserved_by = models.ForeignKey(
+        "WalletTransaction", null=True, blank=True, on_delete=models.SET_NULL, related_name="reserved_utxos",
+    )
+    first_seen_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-first_seen_at"]
+        constraints = [models.UniqueConstraint(fields=["txid", "vout"], name="unique_bitcoin_outpoint")]
+        indexes = [models.Index(fields=["status", "block_height"])]
+
+    def __str__(self):
+        return f"{self.txid}:{self.vout} {self.value} sats [{self.status}]"
+
+    def confirmations(self, tip_height: int | None) -> int:
+        if not self.block_height or tip_height is None:
+            return 0
+        return max(tip_height - self.block_height + 1, 0)

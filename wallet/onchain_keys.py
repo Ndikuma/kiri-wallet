@@ -3,7 +3,14 @@ On-chain Bitcoin key management: one BIP32 HD wallet for the whole platform.
 
 Every address handed out (a user's deposit address, or an internal change
 address created during a withdrawal) is a deterministic child of a single
-root extended private key, at `m/44'/<coin_type>'/0'/0/<index>`. The root
+root extended private key:
+
+  - native SegWit (P2WPKH, bc1q/tb1q — the default): m/84'/<coin_type>'/0'/<chain>/<index>
+  - legacy (P2PKH, 1.../m.../n...):                   m/44'/<coin_type>'/0'/<chain>/<index>
+
+where <chain> is 0 for deposit addresses and 1 for change, per BIP44/BIP84. The
+full path is stored on each `PlatformBitcoinAddress` row, so addresses created
+before SegWit support (all legacy, m/44'/.../0/<index>) stay spendable. The root
 xprv is generated once, encrypted with Fernet (`WALLET_ENCRYPTION_KEY`), and
 stored in `BitcoinHDWallet` (a one-row table); `PlatformBitcoinAddress`
 tracks the (address, derivation_index) pairs derived from it so a UTXO found
@@ -15,14 +22,16 @@ import os
 import uuid
 
 from btclib.bip32.bip32 import derive, prv_keyinfo_from_xprv, rootxprv_from_seed
+from btclib.hashes import hash160
 from btclib.network import NETWORKS
+from btclib.script.script import serialize as script_serialize
 from btclib.script.script_pub_key import ScriptPubKey
 from btclib.to_pub_key import pub_keyinfo_from_prv_key
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.db import transaction as db_transaction
 
-from wallet.models import BitcoinHDWallet, PlatformBitcoinAddress
+from wallet.models import BitcoinAddressPurpose, BitcoinHDWallet, BitcoinScriptType, PlatformBitcoinAddress
 
 # BIP44 registered coin type: 0 = Bitcoin mainnet, 1 = any Bitcoin testnet/regtest/signet.
 _COIN_TYPE_BY_NETWORK = {"mainnet": 0, "testnet": 1, "testnet4": 1, "regtest": 1, "signet": 1}
@@ -89,44 +98,86 @@ def _decrypt_root_xprv(hd_wallet: BitcoinHDWallet) -> str:
         ) from exc
 
 
-def _derivation_path(network: str, index: int) -> str:
+_PURPOSE_BY_SCRIPT_TYPE = {BitcoinScriptType.P2PKH: 44, BitcoinScriptType.P2WPKH: 84}
+_CHAIN_BY_ADDRESS_PURPOSE = {BitcoinAddressPurpose.DEPOSIT: 0, BitcoinAddressPurpose.CHANGE: 1}
+
+
+def default_script_type() -> str:
+    script_type = getattr(settings, "BITCOIN_ADDRESS_TYPE", BitcoinScriptType.P2WPKH)
+    if script_type not in BitcoinScriptType.values:
+        raise ValueError(f"BITCOIN_ADDRESS_TYPE must be one of {BitcoinScriptType.values}, not {script_type!r}.")
+    return script_type
+
+
+def derivation_path(network: str, script_type: str, purpose: str, index: int) -> str:
     coin_type = _COIN_TYPE_BY_NETWORK.get(network, 1)
-    return f"m/44h/{coin_type}h/0h/0/{index}"
+    bip_purpose = _PURPOSE_BY_SCRIPT_TYPE[script_type]
+    chain = _CHAIN_BY_ADDRESS_PURPOSE[purpose]
+    return f"m/{bip_purpose}h/{coin_type}h/0h/{chain}/{index}"
 
 
-def _scalar_and_script_pub_key(root_xprv: str, network: str, index: int):
-    child_xprv = derive(root_xprv, _derivation_path(network, index))
+def script_pub_key_for(pub_key: bytes, script_type: str, network: str) -> ScriptPubKey:
+    if script_type == BitcoinScriptType.P2WPKH:
+        return ScriptPubKey(script_serialize(["OP_0", hash160(pub_key)]), network)
+    return ScriptPubKey.p2pkh(pub_key, compressed=True, network=network)
+
+
+def _derive_key(root_xprv: str, path: str, script_type: str) -> tuple[int, bytes, ScriptPubKey]:
+    child_xprv = derive(root_xprv, path)
     scalar, resolved_network, _compressed = prv_keyinfo_from_xprv(child_xprv)
-    script_pub_key = ScriptPubKey.p2pkh(scalar, compressed=True, network=resolved_network)
-    return scalar, script_pub_key
+    pub_key, _network = pub_keyinfo_from_prv_key(scalar, network=resolved_network, compressed=True)
+    return scalar, pub_key, script_pub_key_for(pub_key, script_type, resolved_network)
 
 
-def create_address(label: str = "") -> PlatformBitcoinAddress:
+def create_address(
+    label: str = "",
+    *,
+    purpose: str = BitcoinAddressPurpose.DEPOSIT,
+    wallet=None,
+    script_type: str | None = None,
+) -> PlatformBitcoinAddress:
     """Derive and persist the next unused address in the platform's HD wallet."""
+    script_type = script_type or default_script_type()
     _get_or_create_hd_wallet()  # ensure the singleton row exists before locking it below
 
     with db_transaction.atomic():
         hd_wallet = BitcoinHDWallet.objects.select_for_update().get(pk=_HD_WALLET_SINGLETON_ID)
         index = hd_wallet.next_index
         root_xprv = _decrypt_root_xprv(hd_wallet)
-        _scalar, script_pub_key = _scalar_and_script_pub_key(root_xprv, hd_wallet.network, index)
+        path = derivation_path(hd_wallet.network, script_type, purpose, index)
+        _scalar, _pub_key, script_pub_key = _derive_key(root_xprv, path, script_type)
 
         hd_wallet.next_index = index + 1
         hd_wallet.save(update_fields=["next_index"])
 
         return PlatformBitcoinAddress.objects.create(
-            address=script_pub_key.address, derivation_index=index, label=label,
+            address=script_pub_key.address, derivation_index=index, derivation_path=path,
+            script_type=script_type, purpose=purpose, wallet=wallet, label=label,
         )
 
 
-def load_signing_key(address_row: PlatformBitcoinAddress) -> tuple[int, ScriptPubKey]:
-    """Return (private_key_scalar, script_pub_key) to sign a spend from this address."""
+def load_signing_key(address_row: PlatformBitcoinAddress) -> tuple[int, bytes, ScriptPubKey]:
+    """Return (private_key_scalar, compressed_pub_key, script_pub_key) to sign a spend from this address.
+
+    Re-derives the key from its stored path and refuses to return it if the
+    result doesn't reproduce the stored address — a mismatch (wrong root key,
+    corrupted path) must never produce a signature for coins it doesn't control.
+    """
     hd_wallet = BitcoinHDWallet.objects.get(pk=_HD_WALLET_SINGLETON_ID)
     root_xprv = _decrypt_root_xprv(hd_wallet)
-    return _scalar_and_script_pub_key(root_xprv, hd_wallet.network, address_row.derivation_index)
+    path = address_row.derivation_path or derivation_path(
+        hd_wallet.network, BitcoinScriptType.P2PKH, BitcoinAddressPurpose.DEPOSIT, address_row.derivation_index,
+    )
+    scalar, pub_key, script_pub_key = _derive_key(root_xprv, path, address_row.script_type)
+    if script_pub_key.address != address_row.address:
+        raise KeyEncryptionError(
+            f"Re-derived key for {path} gives {script_pub_key.address}, not the stored address "
+            f"{address_row.address}. Refusing to sign."
+        )
+    return scalar, pub_key, script_pub_key
 
 
-def pub_key_bytes(scalar: int, network: str) -> bytes:
-    """Compressed SEC-encoded public key for a private key scalar, for building a scriptSig."""
-    pubkey, _network = pub_keyinfo_from_prv_key(scalar, network=network, compressed=True)
-    return pubkey
+def address_network_class(network: str | None = None) -> str:
+    """btclib's address network for a BITCOIN_NETWORK: every test network (testnet3,
+    testnet4, signet) shares the "testnet" address format; only mainnet differs."""
+    return "mainnet" if (network or _network()) == "mainnet" else "testnet"
