@@ -3,6 +3,7 @@ Tests for the on-chain Bitcoin flow, run against an in-memory fake block
 explorer (`FakeChain`) so they never touch the network. Signed withdrawals are
 checked independently with btclib's consensus engine.
 """
+import io
 import os
 from datetime import timedelta
 from unittest import mock
@@ -498,3 +499,201 @@ class ApiTests(OnchainTestCase):
         page = self.client.post("/app/bitcoin/")
         self.assertContains(page, "tb1q")
         self.assertContains(page, "Generate a new address")
+
+
+# ─────────────────────────────────────────────────────────────
+# Block explorer provider management
+# ─────────────────────────────────────────────────────────────
+
+import json as _json  # noqa: E402
+
+import requests  # noqa: E402
+
+from wallet import esplora_client  # noqa: E402
+from wallet.models import BlockExplorerProvider  # noqa: E402
+
+
+class FakeResponse:
+    def __init__(self, status=200, body="", content_type="text/plain"):
+        self.status_code = status
+        self.text = body if isinstance(body, str) else _json.dumps(body)
+        self.headers = {"content-type": content_type}
+
+    def json(self):
+        return _json.loads(self.text)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} error", response=self)
+
+
+class FakeExplorers:
+    """Maps base URL -> behaviour ("ok", "down", "html", "wrong_chain", or a tip height)."""
+
+    def __init__(self, network="testnet4", tip=5000):
+        self.network = network
+        self.tip = tip
+        self.behaviour = {}
+        self.calls = []
+
+    def request(self, method, url, data=None, headers=None, timeout=None):
+        self.calls.append((method, url, headers))
+        base = next(b for b in self.behaviour if url.startswith(b))
+        path = url[len(base):]
+        mode = self.behaviour[base]
+        if mode == "down":
+            raise requests.ConnectionError("connection refused")
+        if mode == "html":
+            return FakeResponse(200, "<html>explorer</html>", "text/html")
+        tip = mode if isinstance(mode, int) else self.tip
+        if path == "/blocks/tip/height":
+            return FakeResponse(200, str(tip))
+        if path == "/block-height/0":
+            genesis = esplora_client.GENESIS_HASHES["testnet" if mode == "wrong_chain" else self.network]
+            return FakeResponse(200, genesis)
+        if path == "/fee-estimates":
+            return FakeResponse(200, {"1": 5.0, "6": 2.5}, "application/json")
+        if path.startswith("/tx/"):
+            return FakeResponse(404, "Transaction not found")
+        return FakeResponse(404, "not found")
+
+
+@override_settings(BITCOIN_NETWORK="testnet4", WALLET_ENCRYPTION_KEY=TEST_KEY)
+class ProviderTests(TestCase):
+    def setUp(self):
+        self.fake = FakeExplorers()
+        patcher = mock.patch.object(esplora_client._SESSION, "request", side_effect=self.fake.request)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        BlockExplorerProvider.objects.all().delete()
+
+    def add(self, name, url, priority, mode="ok", **kw):
+        self.fake.behaviour[url] = mode
+        return BlockExplorerProvider.objects.create(name=name, network="testnet4", api_url=url, priority=priority, **kw)
+
+    def test_defaults_are_seeded_by_the_migration(self):
+        # setUp cleared them; re-run the seed function to check what it creates.
+        import importlib
+
+        from django.apps import apps
+
+        importlib.import_module("wallet.migrations.0008_block_explorer_providers").seed_providers(apps, None)
+        self.assertEqual(
+            list(BlockExplorerProvider.objects.filter(network="testnet4").values_list("api_url", flat=True)),
+            ["https://mempool.space/testnet4/api"],
+        )
+        self.assertEqual(BlockExplorerProvider.objects.filter(network="mainnet").count(), 2)
+
+    def test_falls_back_to_built_in_defaults_when_none_configured(self):
+        self.assertEqual([p.api_url for p in esplora_client._providers()], ["https://mempool.space/testnet4/api"])
+
+    def test_priority_order_failover_and_health_counters(self):
+        primary = self.add("Own node", "https://node.example/api", 1, mode="down")
+        backup = self.add("mempool", "https://mempool.example/api", 2)
+
+        self.assertEqual(esplora_client.get_tip_height(), 5000)  # served by the backup
+        primary.refresh_from_db()
+        backup.refresh_from_db()
+        self.assertEqual((primary.consecutive_failures, primary.total_failures), (1, 1))
+        self.assertIn("connection refused", primary.last_error)
+        self.assertEqual((backup.consecutive_failures, backup.total_requests), (0, 1))
+
+    def test_failing_provider_is_tried_last_until_it_recovers(self):
+        flaky = self.add("Flaky", "https://flaky.example/api", 1, consecutive_failures=3)
+        self.add("Steady", "https://steady.example/api", 2)
+        self.assertEqual([p.name for p in esplora_client._providers()], ["Steady", "Flaky"])
+        flaky.consecutive_failures = 0
+        flaky.save()
+        self.assertEqual([p.name for p in esplora_client._providers()], ["Flaky", "Steady"])
+
+    def test_disabled_providers_are_skipped_and_all_disabled_is_an_error(self):
+        off = self.add("Off", "https://off.example/api", 1, is_active=False)
+        self.add("On", "https://on.example/api", 2)
+        self.assertEqual([p.name for p in esplora_client._providers()], ["On"])
+        BlockExplorerProvider.objects.update(is_active=False)
+        with self.assertRaisesMessage(esplora_client.EsploraError, "disabled"):
+            esplora_client.get_tip_height()
+        self.assertFalse(off.is_active)
+
+    def test_auth_header_is_sent(self):
+        self.add("Private", "https://private.example/api", 1, auth_header="X-API-Key", auth_value="secret")
+        esplora_client.get_tip_height()
+        self.assertEqual(self.fake.calls[-1][2], {"X-API-Key": "secret"})
+
+    def test_html_page_is_treated_as_a_failure(self):
+        self.add("Website", "https://web.example/api", 1, mode="html")
+        self.add("Api", "https://api.example/api", 2)
+        self.assertEqual(esplora_client.get_tip_height(), 5000)
+        self.assertEqual(BlockExplorerProvider.objects.get(name="Website").consecutive_failures, 1)
+
+    def test_not_found_is_definitive_and_counts_as_a_success(self):
+        provider = self.add("Api", "https://api.example/api", 1)
+        with self.assertRaises(esplora_client.EsploraNotFound):
+            esplora_client.get_tx_status("00" * 32)
+        provider.refresh_from_db()
+        self.assertEqual(provider.consecutive_failures, 0)
+
+    def test_health_check_detects_each_kind_of_problem(self):
+        rows = [
+            self.add("Good", "https://good.example/api", 1),
+            self.add("Down", "https://down.example/api", 2, mode="down"),
+            self.add("Wrong chain", "https://testnet3.example/api", 3, mode="wrong_chain"),
+            self.add("Lagging", "https://stale.example/api", 4, mode=4990),
+            self.add("Website", "https://web.example/api", 5, mode="html"),
+        ]
+        results = {r["provider"].name: r for r in esplora_client.check_providers(rows)}
+
+        self.assertTrue(results["Good"]["ok"])
+        self.assertEqual(results["Good"]["tip_height"], 5000)
+        self.assertEqual(results["Good"]["fee_rate_sat_per_vb"], 2.5)
+        self.assertIn("connection refused", results["Down"]["message"])
+        self.assertIn("wrong chain", results["Wrong chain"]["message"])
+        self.assertIn("10 blocks behind", results["Lagging"]["message"])
+        self.assertIn("HTML", results["Website"]["message"])
+
+        good = BlockExplorerProvider.objects.get(name="Good")
+        self.assertEqual((good.health, good.last_check_ok, good.last_tip_height), ("healthy", True, 5000))
+        self.assertEqual(BlockExplorerProvider.objects.get(name="Lagging").health, "degraded")
+
+    def test_check_providers_command(self):
+        from django.core.management import CommandError, call_command
+
+        self.add("Good", "https://good.example/api", 1)
+        out = io.StringIO()
+        call_command("check_providers", stdout=out)
+        self.assertIn("OK", out.getvalue())
+
+        BlockExplorerProvider.objects.all().delete()
+        self.add("Down", "https://down.example/api", 1, mode="down")
+        with self.assertRaisesMessage(CommandError, "No healthy active provider"):
+            call_command("check_providers", stdout=io.StringIO())
+
+    def test_admin_add_check_and_toggle(self):
+        admin_user = get_user_model().objects.create_superuser(username="root", email="root@example.com", password="pw-12345678")
+        self.client.force_login(admin_user)
+        self.fake.behaviour["https://new.example/api"] = "ok"
+
+        response = self.client.post("/admin/wallet/blockexplorerprovider/add/", {
+            "name": "New", "network": "testnet4", "api_url": "https://new.example/api", "web_url": "",
+            "priority": 5, "is_active": "on", "timeout_seconds": 15, "auth_header": "X-API-Key", "auth_value": "s3cret",
+        }, follow=True)
+        self.assertEqual(response.status_code, 200)
+        provider = BlockExplorerProvider.objects.get(name="New")
+        self.assertTrue(provider.last_check_ok)  # checked automatically when added
+        self.assertEqual(provider.auth_value, "s3cret")
+
+        changelist = self.client.get("/admin/wallet/blockexplorerprovider/")
+        self.assertContains(changelist, "New")
+        self.assertNotContains(changelist, "s3cret")
+
+        self.client.post("/admin/wallet/blockexplorerprovider/", {
+            "action": "deactivate", "_selected_action": [str(provider.pk)],
+        })
+        provider.refresh_from_db()
+        self.assertFalse(provider.is_active)
+
+        self.client.post("/admin/wallet/blockexplorerprovider/", {
+            "action": "check_now", "_selected_action": [str(provider.pk)],
+        })
+        provider.refresh_from_db()
+        self.assertIsNotNone(provider.last_checked_at)

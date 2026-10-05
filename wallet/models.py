@@ -566,3 +566,77 @@ class BitcoinUTXO(models.Model):
         if not self.block_height or tip_height is None:
             return 0
         return max(tip_height - self.block_height + 1, 0)
+
+
+class BitcoinNetwork(models.TextChoices):
+    MAINNET = "mainnet", "Mainnet"
+    TESTNET4 = "testnet4", "Testnet4"
+    TESTNET = "testnet", "Testnet3"
+    SIGNET = "signet", "Signet"
+    REGTEST = "regtest", "Regtest"
+
+
+class BlockExplorerProvider(models.Model):
+    """An Esplora-compatible block explorer API (mempool.space, blockstream.info,
+    or your own esplora/electrs/mempool instance) used for on-chain data and broadcast.
+
+    Active providers for the configured BITCOIN_NETWORK are tried in priority order;
+    the next one is used when one fails. Health fields are updated on every request
+    and by health checks (`check_providers`, the admin "Check now" action).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=80)
+    network = models.CharField(max_length=20, choices=BitcoinNetwork.choices, db_index=True)
+    api_url = models.URLField(
+        max_length=300, help_text="Esplora API base URL, e.g. https://mempool.space/testnet4/api (no trailing slash).",
+    )
+    web_url = models.URLField(
+        max_length=300, blank=True, default="",
+        help_text="Optional explorer website for 'view transaction' links, e.g. https://mempool.space/testnet4.",
+    )
+    priority = models.PositiveIntegerField(default=100, help_text="Lower is tried first.")
+    is_active = models.BooleanField(default=True)
+    timeout_seconds = models.PositiveIntegerField(default=15, help_text="Read timeout per request.")
+    auth_header = models.CharField(
+        max_length=60, blank=True, default="",
+        help_text="Optional header name for a private/paid instance, e.g. Authorization or X-API-Key.",
+    )
+    auth_value = models.CharField(
+        max_length=300, blank=True, default="",
+        help_text="Value sent in that header, e.g. 'Bearer <token>'. Never shown in lists.",
+    )
+
+    # Health, maintained automatically.
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    last_check_ok = models.BooleanField(null=True, blank=True)
+    last_check_message = models.CharField(max_length=500, blank=True, default="")
+    last_latency_ms = models.PositiveIntegerField(null=True, blank=True)
+    last_tip_height = models.PositiveIntegerField(null=True, blank=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=500, blank=True, default="")
+    consecutive_failures = models.PositiveIntegerField(default=0)
+    total_requests = models.PositiveBigIntegerField(default=0)
+    total_failures = models.PositiveBigIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["network", "priority", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["network", "api_url"], name="unique_provider_url_per_network"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_network_display()})"
+
+    @property
+    def health(self) -> str:
+        """unchecked / healthy / degraded / down — for display."""
+        if self.consecutive_failures >= 3 or self.last_check_ok is False:
+            return "down" if self.consecutive_failures >= 3 else "degraded"
+        if self.last_check_ok is None and not self.total_requests:
+            return "unchecked"
+        return "degraded" if self.consecutive_failures else "healthy"

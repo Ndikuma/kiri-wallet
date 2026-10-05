@@ -98,7 +98,7 @@ Wallet (`/api/wallet/`), all requiring `Authorization: Bearer <access_token>`:
 - `GET|POST /bitcoin/` — fetch/generate the user's on-chain deposit address (with QR, address type, network, confirmations required)
 - `POST /bitcoin/new-address/` — rotate to a fresh deposit address (previous addresses keep being watched and credited)
 - `GET  /bitcoin/deposits/` — the user's on-chain deposits with confirmation counts
-- `GET  /blink/`, `/onchain/`, `/amatopay/` — provider connectivity status
+- `GET  /blink/`, `/onchain/`, `/amatopay/` — provider connectivity status (`/onchain/` includes each block explorer provider's health)
 - `GET  /exchange/rate/` — current BTC→BIF rate
 - `POST /exchange/quote/` `{amount_sats}` — quote the BIF equivalent, without moving any balance
 - `POST /exchange/convert/` `{amount_sats}` — actually exchange sats for BIF (debits `available_balance`, credits `bif_balance`); one-directional, BIF is never converted back to sats
@@ -106,6 +106,35 @@ Wallet (`/api/wallet/`), all requiring `Authorization: Bearer <access_token>`:
 - `GET  /pos/charge/<id>/` — poll a POS charge's status
 - `POST /bif/topup/` `{amount_bif, payer_alias}` — start an AmatoPay checkout session
 - `GET  /bif/topup/<session_id>/` — poll it; credits `bif_balance` once AmatoPay reports it paid
+
+## Block explorer providers
+
+On-chain data (deposits, fee rates, confirmations) and broadcasting go through
+Esplora-compatible block explorer APIs. Manage them in the admin under
+**Wallet → Block explorer providers**:
+
+- **Add** a provider for a network: a public one (mempool.space, blockstream.info)
+  or your own esplora / electrs / mempool instance. Private or paid instances can
+  use an auth header (e.g. `X-API-Key`); the value is never shown again after saving.
+- **Priority** (lower first) decides the order they're tried; when one fails the
+  next is used. **Enable/disable** a provider without deleting it.
+- **Health** is tracked automatically on every request (successes, failures,
+  last error). A provider that fails 3 times in a row is tried after the healthy
+  ones until it recovers.
+- **Check now** (admin action, also run automatically when you add a provider)
+  verifies that the provider answers, serves the **right chain** (its block 0 must
+  be the genesis block of that network, which catches testnet3 vs testnet4 mix-ups),
+  is not **lagging** more than 3 blocks behind the others, and returns fee estimates.
+- `python manage.py check_providers` runs the same checks from the command line
+  (`--all` for every network, `--inactive` to include disabled ones) and exits
+  with an error when no healthy provider is left — usable from cron/monitoring.
+  `worker` also re-checks the active providers every 10 minutes
+  (`--provider-check-interval`, `0` to disable).
+
+Defaults (seeded by the migration): mainnet, testnet3 and signet each have
+Blockstream + mempool.space; **testnet4 only has mempool.space**, because
+blockstream.info has no testnet4 API. For redundancy on testnet4 (and for
+privacy and independence on mainnet), run your own instance and add it here.
 
 ## On-chain Bitcoin: architecture and security notes
 

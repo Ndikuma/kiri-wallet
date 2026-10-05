@@ -9,6 +9,7 @@ from .models import (
     AmatoPayWebhookEvent,
     BitcoinHDWallet,
     BitcoinUTXO,
+    BlockExplorerProvider,
     ExchangeRate,
     PlatformBitcoinAddress,
     POSCharge,
@@ -229,3 +230,73 @@ class BitcoinUTXOAdmin(ModelAdmin):
     @display(description="Address")
     def display_address(self, obj):
         return _explorer_link("address", obj.address.address)
+
+
+_PROVIDER_HEALTH_LABELS = {"healthy": "success", "degraded": "warning", "down": "danger", "unchecked": "info"}
+
+
+@admin.register(BlockExplorerProvider)
+class BlockExplorerProviderAdmin(ModelAdmin):
+    """Block explorer APIs used for on-chain data and broadcast. Active providers for
+    the configured BITCOIN_NETWORK are tried in priority order (lowest first)."""
+
+    list_display = [
+        "name", "network", "api_url", "priority", "is_active", "display_health", "last_latency_ms",
+        "last_tip_height", "consecutive_failures", "last_checked_at",
+    ]
+    list_editable = ["priority", "is_active"]
+    list_filter = ["network", "is_active"]
+    search_fields = ["name", "api_url"]
+    actions = ["check_now", "activate", "deactivate"]
+    readonly_fields = [
+        "display_health", "last_checked_at", "last_check_ok", "last_check_message", "last_latency_ms",
+        "last_tip_height", "last_success_at", "last_failure_at", "last_error", "consecutive_failures",
+        "total_requests", "total_failures", "created_at", "updated_at",
+    ]
+    fieldsets = [
+        (None, {"fields": ["name", "network", "api_url", "web_url", "priority", "is_active", "timeout_seconds"]}),
+        ("Authentication (private or paid instances only)", {"fields": ["auth_header", "auth_value"]}),
+        ("Health", {"fields": readonly_fields}),
+    ]
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if "auth_value" in form.base_fields:
+            from django import forms
+
+            # Don't echo a stored secret back into the page.
+            form.base_fields["auth_value"].widget = forms.PasswordInput(render_value=False)
+            form.base_fields["auth_value"].required = False
+            form.base_fields["auth_value"].help_text = "Leave empty to keep the current value."
+        return form
+
+    def save_model(self, request, obj, form, change):
+        if change and not form.cleaned_data.get("auth_value"):
+            obj.auth_value = BlockExplorerProvider.objects.get(pk=obj.pk).auth_value
+        super().save_model(request, obj, form, change)
+        if not change:
+            self._check(request, [obj])
+
+    @display(description="Health", label=_PROVIDER_HEALTH_LABELS)
+    def display_health(self, obj):
+        return obj.health
+
+    def _check(self, request, rows):
+        from wallet.esplora_client import check_providers
+
+        for result in check_providers(rows):
+            provider = result["provider"]
+            level = "success" if result["ok"] else "error"
+            self.message_user(request, f"{provider}: {result['message'] or 'failed'}", level=level)
+
+    @admin.action(description="Check now (reachability, chain, tip, fees)")
+    def check_now(self, request, queryset):
+        self._check(request, queryset)
+
+    @admin.action(description="Enable selected providers")
+    def activate(self, request, queryset):
+        self.message_user(request, f"Enabled {queryset.update(is_active=True)} provider(s).")
+
+    @admin.action(description="Disable selected providers")
+    def deactivate(self, request, queryset):
+        self.message_user(request, f"Disabled {queryset.update(is_active=False)} provider(s).")

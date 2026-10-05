@@ -39,6 +39,10 @@ class Command(BaseCommand):
             help="Seconds between on-chain scans (default: 60).",
         )
         parser.add_argument(
+            "--provider-check-interval", type=int, default=600,
+            help="Seconds between block explorer provider health checks (default: 600, 0 disables).",
+        )
+        parser.add_argument(
             "--backfill", action="store_true",
             help="Run one initial Blink backfill before starting websocket subscriptions.",
         )
@@ -74,6 +78,10 @@ class Command(BaseCommand):
             tasks.append(asyncio.create_task(self._run_lightning(options), name="lightning"))
         if not options["skip_onchain"]:
             tasks.append(asyncio.create_task(self._run_onchain(options["onchain_interval"]), name="onchain"))
+            if options["provider_check_interval"] > 0:
+                tasks.append(asyncio.create_task(
+                    self._run_provider_checks(options["provider_check_interval"]), name="provider-checks",
+                ))
 
         await asyncio.gather(*tasks)
 
@@ -92,6 +100,28 @@ class Command(BaseCommand):
             logger.info("Initial Blink backfill finished")
 
         await subscriber.run_forever()
+
+    async def _run_provider_checks(self, interval: int):
+        from django.conf import settings
+
+        from wallet.esplora_client import check_providers
+        from wallet.models import BlockExplorerProvider
+
+        def run_checks():
+            rows = BlockExplorerProvider.objects.filter(network=settings.BITCOIN_NETWORK, is_active=True)
+            return check_providers(rows)
+
+        while True:
+            try:
+                results = await asyncio.to_thread(run_checks)
+                for r in results:
+                    log = logger.info if r["ok"] else logger.warning
+                    log("Provider %s: %s", r["provider"], r["message"])
+                if results and not any(r["ok"] for r in results):
+                    logger.error("No healthy block explorer provider for %s — on-chain scans will fail.", settings.BITCOIN_NETWORK)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Provider health check failed: %s", exc)
+            await asyncio.sleep(interval)
 
     async def _run_onchain(self, interval: int):
         service = CustodialBitcoinService()
